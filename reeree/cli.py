@@ -18,7 +18,7 @@ from .planner import create_plan
 @click.option("--project", type=click.Path(exists=True), default=".", help="Project directory")
 @click.pass_context
 def main(ctx, intent, model, api_base, api_key, autonomy, project):
-    """reeree — edit a markdown document. roombas respond to what you write.
+    """reeree — edit a markdown document. daemons respond to what you write.
 
     Examples:
         reeree                                  # open TUI (resume plan or blank)

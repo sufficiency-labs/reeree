@@ -42,6 +42,11 @@ Power users already have the right workflow: tmux for persistence, vim for editi
 **In practice:** 32K context models work fine because each step gets focused context. ollama on localhost is the default. Cloud APIs are optional.
 **Rules out:** Requiring specific commercial APIs, depending on 200K context windows, features that only work with frontier models.
 
+### 7. No Anthropomorphism
+**Principle:** The tool is a machine. It does not "think," "suggest," "recommend," or "know." It routes, dispatches, and executes.
+**In practice:** No language in the UI, docs, or code that implies agency, personality, or cognition. The orchestrator doesn't "recommend" a model — it routes to the best-fit executor based on task classification. No "I" anywhere. No opinions. No conversational framing.
+**Rules out:** "I'd suggest...", "I think...", "I noticed...", helper personas, chatbot personality, any implication that the tool has preferences or experiences.
+
 ## Red Lines
 
 What we will **never** build, regardless of convenience or demand:
@@ -53,6 +58,8 @@ What we will **never** build, regardless of convenience or demand:
 3. **No telemetry or phone-home.** Zero network calls except to the configured LLM API. Verification: run with network blocked except LLM endpoint — does everything work?
 
 4. **No lock-in.** Plans are markdown. Config is JSON. The tool adds value through orchestration, not proprietary formats. Verification: can you stop using reeree and still use every artifact it created?
+
+5. **No anthropomorphism.** The tool never uses first person, never implies cognition, never frames outputs as opinions or suggestions. It is an executor daemon. It routes tasks to models, reports results, flags failures. That's it. Verification: grep the entire codebase and UI for "I ", "think", "suggest", "recommend", "believe", "feel" — zero hits.
 
 ## Data and Consent Model
 

@@ -17,7 +17,7 @@ class PlanEditor(TextArea):
     """The plan document — a TextArea with plan-aware rendering.
 
     This is the primary interface. The user edits markdown.
-    Roombas read and update the same content.
+    Daemons read and update the same content.
     """
 
     BINDINGS = [
@@ -58,19 +58,19 @@ class PlanEditor(TextArea):
                 pass
 
 
-class WorkerLog(RichLog):
-    """Log pane for a worker's execution stream."""
+class DaemonLog(RichLog):
+    """Log pane for a daemon's execution stream."""
 
-    def __init__(self, worker_id: int, **kwargs):
+    def __init__(self, daemon_id: int, **kwargs):
         super().__init__(
             highlight=True,
             markup=True,
             wrap=True,
-            id=f"worker-{worker_id}",
+            id=f"daemon-{daemon_id}",
             **kwargs,
         )
-        self.worker_id = worker_id
-        self.write(f"[bold]Worker {worker_id}[/bold] — idle")
+        self.daemon_id = daemon_id
+        self.write(f"[bold]Daemon {daemon_id}[/bold] — idle")
 
 
 class FileViewer(TextArea):
@@ -100,11 +100,11 @@ class FileViewer(TextArea):
 
 
 class StatusBar(Static):
-    """Bottom status bar — mode, worker count, progress."""
+    """Bottom status bar — mode, daemon count, progress."""
 
     mode = reactive("NORMAL")
-    worker_count = reactive(0)
-    active_workers = reactive(0)
+    daemon_count = reactive(0)
+    active_daemons = reactive(0)
     progress = reactive((0, 0))
 
     def render(self) -> str:
@@ -116,8 +116,8 @@ class StatusBar(Static):
         }
         color = mode_colors.get(self.mode, "bold white")
         progress_str = f"{done}/{total}" if total > 0 else "no plan"
-        worker_str = f"{self.active_workers} active" if self.active_workers else "idle"
-        return f" [{color}]{self.mode}[/{color}]  |  workers: {worker_str}  |  progress: {progress_str}"
+        daemon_str = f"{self.active_daemons} active" if self.active_daemons else "idle"
+        return f" [{color}]{self.mode}[/{color}]  |  daemons: {daemon_str}  |  progress: {progress_str}"
 
 
 class CommandInput(TextArea):
@@ -134,7 +134,7 @@ class CommandInput(TextArea):
 
 
 class ReereeApp(App):
-    """The reeree application — a living markdown document with roombas."""
+    """The reeree application — a living markdown document with daemons."""
 
     TITLE = "reeree"
     CSS = """
@@ -161,7 +161,7 @@ class ReereeApp(App):
     #command-bar.visible {
         display: block;
     }
-    WorkerLog {
+    DaemonLog {
         height: 1fr;
         border: solid $primary;
     }
@@ -181,8 +181,8 @@ class ReereeApp(App):
         self.project_dir = project_dir
         self.config = config
         self.plan = plan or Plan(intent="", steps=[])
-        self._workers: dict[int, dict] = {}
-        self._next_worker_id = 1
+        self._daemons: dict[int, dict] = {}
+        self._next_daemon_id = 1
         self._command_buffer = ""
 
     def compose(self) -> ComposeResult:
@@ -204,9 +204,9 @@ class ReereeApp(App):
         status = self.query_one("#status-bar", StatusBar)
         if self.plan.steps:
             status.progress = self.plan.progress
-        active = sum(1 for w in self._workers.values() if w.get("status") == "active")
-        status.active_workers = active
-        status.worker_count = len(self._workers)
+        active = sum(1 for w in self._daemons.values() if w.get("status") == "active")
+        status.active_daemons = active
+        status.daemon_count = len(self._daemons)
 
     def action_command_mode(self) -> None:
         """Enter command mode (vim : )."""
@@ -264,7 +264,7 @@ class ReereeApp(App):
             self._save_plan()
             self.exit()
         elif command == "go":
-            await self._dispatch_workers()
+            await self._dispatch_daemons()
         elif command == "add":
             self._add_step(args.strip('"').strip("'"))
         elif command == "del":
@@ -276,7 +276,7 @@ class ReereeApp(App):
         elif command == "diff":
             self._show_diff(args)
         elif command == "log":
-            self._show_worker_log(args)
+            self._show_daemon_log(args)
         elif command == "file":
             self.show_file(args)
         elif command == "shell":
@@ -290,9 +290,9 @@ class ReereeApp(App):
         elif command == "cohere":
             await self._cohere(args)
         elif command == "pause":
-            self._pause_worker(args)
+            self._pause_daemon(args)
         elif command == "kill" and args:
-            self._kill_worker(args)
+            self._kill_daemon(args)
         elif command == "close":
             self.action_close_split()
         else:
@@ -366,15 +366,15 @@ class ReereeApp(App):
         except (ValueError, IndexError):
             self.notify("Usage: :diff [N]", severity="warning")
 
-    def _show_worker_log(self, worker_str: str) -> None:
-        """Show a worker's execution log."""
+    def _show_daemon_log(self, daemon_str: str) -> None:
+        """Show a daemon's execution log."""
         try:
-            wid = int(worker_str) if worker_str else 1
-            if wid in self._workers:
-                log = self._workers[wid].get("log", "No log yet")
-                self.show_side_panel(log, title=f"Worker {wid}")
+            wid = int(daemon_str) if daemon_str else 1
+            if wid in self._daemons:
+                log = self._daemons[wid].get("log", "No log yet")
+                self.show_side_panel(log, title=f"Daemon {wid}")
             else:
-                self.notify(f"No worker {wid}", severity="warning")
+                self.notify(f"No daemon {wid}", severity="warning")
         except ValueError:
             self.notify("Usage: :log [N]", severity="warning")
 
@@ -397,9 +397,9 @@ class ReereeApp(App):
         else:
             self.notify(f"Unknown option: {key}", severity="error")
 
-    async def _dispatch_workers(self) -> None:
-        """Dispatch roombas for pending steps."""
-        from ..worker import dispatch_step
+    async def _dispatch_daemons(self) -> None:
+        """Dispatch daemons for pending steps."""
+        from ..daemon_executor import dispatch_step
         editor = self.query_one("#plan-editor", PlanEditor)
         self.plan = editor.get_plan()
 
@@ -408,33 +408,33 @@ class ReereeApp(App):
             self.notify("No pending steps to dispatch")
             return
 
-        for idx, step in pending[:2]:  # Max 2 parallel workers for POC
-            worker_id = self._next_worker_id
-            self._next_worker_id += 1
+        for idx, step in pending[:2]:  # Max 2 parallel daemons for POC
+            daemon_id = self._next_daemon_id
+            self._next_daemon_id += 1
             step.status = "active"
-            step.worker_id = worker_id
-            self._workers[worker_id] = {"status": "active", "step_index": idx, "log": ""}
+            step.daemon_id = daemon_id
+            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": ""}
             editor.update_step_status(idx, "active")
             self._update_status()
-            self.notify(f"Worker {worker_id} dispatched: {step.description[:50]}")
+            self.notify(f"Daemon {daemon_id} dispatched: {step.description[:50]}")
 
-            # Run worker as async task
-            self.run_worker(
+            # Run daemon as async task
+            self.run_worker(  # Textual API method name
                 dispatch_step(
                     step=step,
                     step_index=idx,
                     project_dir=self.project_dir,
                     config=self.config,
-                    on_log=lambda msg, wid=worker_id: self._worker_log(wid, msg),
+                    on_log=lambda msg, wid=daemon_id: self._daemon_log(wid, msg),
                 ),
-                name=f"worker-{worker_id}",
+                name=f"daemon-{daemon_id}",
                 exit_on_error=False,
             )
 
-    def _worker_log(self, worker_id: int, message: str) -> None:
-        """Append to a worker's log."""
-        if worker_id in self._workers:
-            self._workers[worker_id]["log"] += message + "\n"
+    def _daemon_log(self, daemon_id: int, message: str) -> None:
+        """Append to a daemon's log."""
+        if daemon_id in self._daemons:
+            self._daemons[daemon_id]["log"] += message + "\n"
 
     async def _undo_step(self, step_str: str) -> None:
         """Undo a step by reverting its git commit."""
@@ -447,7 +447,7 @@ class ReereeApp(App):
 
     async def _propagate(self) -> None:
         """Propagate: crawl links from current doc, check coherence."""
-        self.notify("Propagate: dispatching coherence roombas on linked docs...")
+        self.notify("Propagate: dispatching coherence daemons on linked docs...")
         # TODO: implement propagation crawler
         self.show_side_panel(
             "Propagate crawls links from the current document and checks\n"
@@ -471,13 +471,13 @@ class ReereeApp(App):
             title="Cohere",
         )
 
-    def _pause_worker(self, worker_str: str) -> None:
-        """Pause a worker."""
+    def _pause_daemon(self, daemon_str: str) -> None:
+        """Pause a daemon."""
         self.notify("Pause: not yet implemented")
 
-    def _kill_worker(self, worker_str: str) -> None:
-        """Kill a worker."""
-        self.notify("Kill worker: not yet implemented")
+    def _kill_daemon(self, daemon_str: str) -> None:
+        """Kill a daemon."""
+        self.notify("Kill daemon: not yet implemented")
 
 
 class CommandScreen(ModalScreen[str]):

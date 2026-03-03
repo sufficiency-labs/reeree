@@ -11,7 +11,7 @@ class Step:
 
     Steps are work queue items with inline specs. The user edits them
     ahead of execution — adding annotations, acceptance criteria, file
-    hints — while workers are busy on earlier steps.
+    hints — while daemons are busy on earlier steps.
 
     Format on disk:
         - [ ] Add retry logic to sync.sh
@@ -19,14 +19,14 @@ class Step:
           > files: scripts/sync.sh, scripts/retry.sh
           > done: retry_test.sh passes
 
-    The `> ` lines are annotations the worker reads as context.
+    The `> ` lines are annotations the daemon reads as context.
     """
     description: str
     status: str = "pending"  # pending, active, done, skipped, failed, blocked
     annotations: list[str] = field(default_factory=list)  # user specs, hints, acceptance criteria
     files: list[str] = field(default_factory=list)  # files this step touches
     commit_hash: str | None = None  # git commit for this step
-    worker_id: int | None = None  # which worker is running this
+    daemon_id: int | None = None  # which daemon is running this
     error: str | None = None  # error message if failed
 
     @property
@@ -67,12 +67,12 @@ class Step:
 class Plan:
     """The plan — a work queue with inline specs.
 
-    The plan is a markdown file that both the user and workers read/write.
-    The user is always editing ahead of the workers: adding steps, annotating
+    The plan is a markdown file that both the user and daemons read/write.
+    The user is always editing ahead of the daemons: adding steps, annotating
     future steps with specs, reordering priorities. Workers pick up steps,
     read the annotations, execute, and mark done.
 
-    This overlap — user planning ahead while workers execute behind —
+    This overlap — user planning ahead while daemons execute behind —
     is where the wasted time goes.
     """
     intent: str
@@ -86,8 +86,8 @@ class Plan:
             line = f"- {step.checkbox} Step {i}: {step.description}"
             if step.commit_hash:
                 line += f" [{step.commit_hash[:7]}]"
-            if step.worker_id is not None and step.status == "active":
-                line += f" (worker {step.worker_id})"
+            if step.daemon_id is not None and step.status == "active":
+                line += f" (daemon {step.daemon_id})"
             if step.error:
                 line += f" ERROR: {step.error}"
             lines.append(line)
@@ -144,12 +144,12 @@ class Plan:
                     commit = commit_match.group(1)
                     desc = desc[:commit_match.start()].strip()
 
-                # Extract worker id (worker N)
-                worker_id = None
-                worker_match = re.search(r"\(worker (\d+)\)", desc)
-                if worker_match:
-                    worker_id = int(worker_match.group(1))
-                    desc = desc[:worker_match.start()].strip()
+                # Extract daemon id (daemon N)
+                daemon_id = None
+                daemon_match = re.search(r"\(daemon (\d+)\)", desc)
+                if daemon_match:
+                    daemon_id = int(daemon_match.group(1))
+                    desc = desc[:daemon_match.start()].strip()
 
                 # Extract error
                 error = None
@@ -162,7 +162,7 @@ class Plan:
                     description=desc,
                     status=status,
                     commit_hash=commit,
-                    worker_id=worker_id,
+                    daemon_id=daemon_id,
                     error=error,
                 )
                 continue

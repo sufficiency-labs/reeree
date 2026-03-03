@@ -1,4 +1,4 @@
-"""Worker — a roomba that executes one step."""
+"""Daemon executor — dispatches and runs a step."""
 
 import json
 from pathlib import Path
@@ -11,9 +11,9 @@ from .llm import chat
 from .executor import run_shell, write_file, edit_file, git_commit
 
 
-WORKER_SYSTEM = """You are a worker executing ONE step of a plan. You receive focused context (only the files relevant to this step).
+EXECUTOR_SYSTEM = """Execute ONE step of a plan. Context: only the files relevant to this step.
 
-Execute the step. Respond with JSON:
+Respond with JSON:
 
 {
   "actions": [
@@ -27,15 +27,15 @@ Execute the step. Respond with JSON:
 }
 
 Action types:
-- "read": read a file to gather info before acting
+- "read": read a file for context
 - "shell": run a shell command
-- "write": write/create a file (provide full content)
+- "write": create/overwrite a file (full content)
 - "edit": replace text in an existing file (old must match exactly)
 
 Rules:
-- Do EXACTLY what the step says. Nothing more.
-- If the step has acceptance criteria (done: ...), verify them.
-- If annotations reference other docs, they've been included in your context. Use them.
+- Execute EXACTLY what the step says. Nothing more.
+- If acceptance criteria exist (done: ...), verify them.
+- If annotations reference other docs, they are included in context.
 - Respond ONLY with JSON."""
 
 
@@ -52,36 +52,36 @@ async def dispatch_step(
         if on_log:
             on_log(msg)
 
-    log(f"Starting: {step.description}")
+    log(f"Executing: {step.description}")
 
     # Gather focused context
     context = gather_context(step, project_dir, config.max_context_tokens * 4)
-    log(f"Context loaded: {len(context)} chars")
+    log(f"Context: {len(context)} chars")
 
-    # Build the prompt with annotations
+    # Build prompt
     prompt_parts = [f"Project context:\n{context}"]
-    prompt_parts.append(f"\nStep to execute: {step.description}")
+    prompt_parts.append(f"\nStep: {step.description}")
 
     if step.files or step.file_hints:
         files = step.files or step.file_hints
         prompt_parts.append(f"Files: {', '.join(files)}")
 
     if step.context_annotations:
-        prompt_parts.append(f"Additional instructions:\n" + "\n".join(f"- {a}" for a in step.context_annotations))
+        prompt_parts.append("Instructions:\n" + "\n".join(f"- {a}" for a in step.context_annotations))
 
     if step.done_criteria:
         prompt_parts.append(f"Acceptance criteria: {step.done_criteria}")
 
-    prompt_parts.append("\nExecute this step. Respond with JSON actions.")
+    prompt_parts.append("\nExecute. Respond with JSON actions.")
 
     messages = [{"role": "user", "content": "\n\n".join(prompt_parts)}]
 
-    # Call LLM
-    log("Calling LLM...")
+    # LLM call
+    log("LLM call...")
     try:
-        response = chat(messages, config, system=WORKER_SYSTEM)
+        response = chat(messages, config, system=EXECUTOR_SYSTEM)
     except Exception as e:
-        log(f"LLM ERROR: {e}")
+        log(f"ERROR: {e}")
         return {"status": "failed", "error": str(e)}
 
     # Parse response
@@ -95,11 +95,11 @@ async def dispatch_step(
         summary = data.get("summary", "")
     except (json.JSONDecodeError, KeyError, IndexError) as e:
         log(f"PARSE ERROR: {e}")
-        log(f"Raw response: {response[:500]}")
-        return {"status": "failed", "error": f"Failed to parse LLM response: {e}"}
+        log(f"Raw: {response[:500]}")
+        return {"status": "failed", "error": f"Parse error: {e}"}
 
     # Execute actions
-    log(f"Executing {len(actions)} actions...")
+    log(f"Actions: {len(actions)}")
     results = []
     for action in actions:
         action_type = action.get("type", "unknown")
@@ -131,23 +131,21 @@ async def dispatch_step(
             result = edit_file(path, action["old"], action["new"])
             results.append(result)
             if not result.success:
-                log(f"  EDIT FAILED: {result.output}")
+                log(f"  FAILED: {result.output}")
 
-    # Check results
+    # Results
     all_ok = all(r.success for r in results) if results else True
 
     if all_ok:
-        # Git commit
         commit_result = git_commit(f"reeree: {step.description}", project_dir)
         if commit_result.success:
             log(f"Committed: {commit_result.output}")
             commit_hash = None
-            # Extract hash from output
             for word in commit_result.output.split():
                 if len(word) == 7 and all(c in "0123456789abcdef" for c in word):
                     commit_hash = word
                     break
-            log(f"DONE: {summary}")
+            log(f"Done: {summary}")
             return {"status": "done", "commit_hash": commit_hash, "summary": summary}
         else:
             log(f"Commit failed: {commit_result.output}")
