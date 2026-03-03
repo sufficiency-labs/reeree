@@ -1,4 +1,4 @@
-"""Plan management — the shared steering document."""
+"""Plan management — the shared steering document / work queue."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7,26 +7,74 @@ import re
 
 @dataclass
 class Step:
-    """A single step in the plan."""
+    """A single step in the plan.
+
+    Steps are work queue items with inline specs. The user edits them
+    ahead of execution — adding annotations, acceptance criteria, file
+    hints — while workers are busy on earlier steps.
+
+    Format on disk:
+        - [ ] Add retry logic to sync.sh
+          > max 3 retries, exponential backoff
+          > files: scripts/sync.sh, scripts/retry.sh
+          > done: retry_test.sh passes
+
+    The `> ` lines are annotations the worker reads as context.
+    """
     description: str
-    status: str = "pending"  # pending, active, done, skipped
+    status: str = "pending"  # pending, active, done, skipped, failed, blocked
+    annotations: list[str] = field(default_factory=list)  # user specs, hints, acceptance criteria
     files: list[str] = field(default_factory=list)  # files this step touches
     commit_hash: str | None = None  # git commit for this step
+    worker_id: int | None = None  # which worker is running this
+    error: str | None = None  # error message if failed
 
     @property
     def checkbox(self) -> str:
-        if self.status == "done":
-            return "[x]"
-        elif self.status == "active":
-            return "[>]"
-        elif self.status == "skipped":
-            return "[-]"
-        return "[ ]"
+        markers = {
+            "done": "[x]",
+            "active": "[>]",
+            "skipped": "[-]",
+            "failed": "[!]",
+            "blocked": "[~]",
+        }
+        return markers.get(self.status, "[ ]")
+
+    @property
+    def done_criteria(self) -> str | None:
+        """Extract acceptance criteria from annotations."""
+        for a in self.annotations:
+            if a.lower().startswith("done:"):
+                return a[5:].strip()
+        return None
+
+    @property
+    def file_hints(self) -> list[str]:
+        """Extract file hints from annotations."""
+        for a in self.annotations:
+            if a.lower().startswith("files:"):
+                return [f.strip() for f in a[6:].split(",")]
+        return []
+
+    @property
+    def context_annotations(self) -> list[str]:
+        """Get annotations that aren't structured (done:/files:) — free-form specs."""
+        return [a for a in self.annotations
+                if not a.lower().startswith(("done:", "files:"))]
 
 
 @dataclass
 class Plan:
-    """The plan — a list of steps with an intent."""
+    """The plan — a work queue with inline specs.
+
+    The plan is a markdown file that both the user and workers read/write.
+    The user is always editing ahead of the workers: adding steps, annotating
+    future steps with specs, reordering priorities. Workers pick up steps,
+    read the annotations, execute, and mark done.
+
+    This overlap — user planning ahead while workers execute behind —
+    is where the wasted time goes.
+    """
     intent: str
     steps: list[Step] = field(default_factory=list)
 
@@ -34,21 +82,41 @@ class Plan:
         """Render plan as markdown."""
         lines = [f"# Plan: {self.intent}", ""]
         for i, step in enumerate(self.steps, 1):
-            line = f"- {step.checkbox} **Step {i}:** {step.description}"
-            if step.files:
-                line += f" ({', '.join(step.files)})"
+            # Step line
+            line = f"- {step.checkbox} Step {i}: {step.description}"
             if step.commit_hash:
-                line += f" `{step.commit_hash[:7]}`"
+                line += f" [{step.commit_hash[:7]}]"
+            if step.worker_id is not None and step.status == "active":
+                line += f" (worker {step.worker_id})"
+            if step.error:
+                line += f" ERROR: {step.error}"
             lines.append(line)
+
+            # Annotations as indented > lines
+            for annotation in step.annotations:
+                lines.append(f"  > {annotation}")
+
+            # Show files if specified and not already in annotations
+            if step.files and not step.file_hints:
+                lines.append(f"  > files: {', '.join(step.files)}")
+
         lines.append("")
         return "\n".join(lines)
 
     @classmethod
     def from_markdown(cls, text: str) -> "Plan":
-        """Parse a plan from markdown."""
+        """Parse a plan from markdown.
+
+        Handles the annotation format:
+            - [ ] Step 1: description
+              > annotation line
+              > done: criteria
+              > files: a.py, b.py
+        """
         lines = text.strip().split("\n")
         intent = ""
         steps = []
+        current_step = None
 
         for line in lines:
             # Parse header
@@ -57,26 +125,62 @@ class Plan:
                 continue
 
             # Parse step lines
-            match = re.match(r"- \[(.)\] \*\*Step \d+:\*\* (.+)", line)
-            if match:
-                marker, desc = match.groups()
-                status = {"x": "done", ">": "active", "-": "skipped"}.get(marker, "pending")
+            step_match = re.match(r"- \[(.)\] Step \d+: (.+)", line)
+            if step_match:
+                # Save previous step
+                if current_step:
+                    steps.append(current_step)
 
-                # Extract files in parens
-                files = []
-                file_match = re.search(r"\(([^)]+)\)\s*(`[^`]+`)?$", desc)
-                if file_match:
-                    files = [f.strip() for f in file_match.group(1).split(",")]
-                    desc = desc[:file_match.start()].strip()
+                marker, desc = step_match.groups()
+                status = {
+                    "x": "done", ">": "active", "-": "skipped",
+                    "!": "failed", "~": "blocked",
+                }.get(marker, "pending")
 
-                # Extract commit hash
+                # Extract commit hash [abc1234]
                 commit = None
-                commit_match = re.search(r"`([a-f0-9]{7})`$", desc)
+                commit_match = re.search(r"\[([a-f0-9]{7})\]", desc)
                 if commit_match:
                     commit = commit_match.group(1)
                     desc = desc[:commit_match.start()].strip()
 
-                steps.append(Step(description=desc, status=status, files=files, commit_hash=commit))
+                # Extract worker id (worker N)
+                worker_id = None
+                worker_match = re.search(r"\(worker (\d+)\)", desc)
+                if worker_match:
+                    worker_id = int(worker_match.group(1))
+                    desc = desc[:worker_match.start()].strip()
+
+                # Extract error
+                error = None
+                error_match = re.search(r"ERROR: (.+)$", desc)
+                if error_match:
+                    error = error_match.group(1)
+                    desc = desc[:error_match.start()].strip()
+
+                current_step = Step(
+                    description=desc,
+                    status=status,
+                    commit_hash=commit,
+                    worker_id=worker_id,
+                    error=error,
+                )
+                continue
+
+            # Parse annotation lines (indented > lines)
+            annotation_match = re.match(r"\s+> (.+)", line)
+            if annotation_match and current_step:
+                annotation = annotation_match.group(1)
+
+                # Extract files from annotation
+                if annotation.lower().startswith("files:"):
+                    current_step.files = [f.strip() for f in annotation[6:].split(",")]
+
+                current_step.annotations.append(annotation)
+
+        # Don't forget the last step
+        if current_step:
+            steps.append(current_step)
 
         return cls(intent=intent, steps=steps)
 
@@ -91,21 +195,26 @@ class Plan:
         return cls.from_markdown(path.read_text())
 
     @property
-    def current_step(self) -> Step | None:
-        """Get the next pending step."""
-        for step in self.steps:
-            if step.status == "pending":
-                return step
-        return None
+    def pending_steps(self) -> list[tuple[int, Step]]:
+        """Get all pending steps with their indices."""
+        return [(i, s) for i, s in enumerate(self.steps) if s.status == "pending"]
 
     @property
-    def current_step_index(self) -> int | None:
-        """Get the index of the next pending step."""
-        for i, step in enumerate(self.steps):
-            if step.status == "pending":
-                return i
-        return None
+    def active_steps(self) -> list[tuple[int, Step]]:
+        """Get all actively executing steps."""
+        return [(i, s) for i, s in enumerate(self.steps) if s.status == "active"]
+
+    @property
+    def dispatchable_steps(self) -> list[tuple[int, Step]]:
+        """Get steps that are ready to dispatch (pending, not blocked)."""
+        return [(i, s) for i, s in enumerate(self.steps) if s.status == "pending"]
 
     @property
     def is_complete(self) -> bool:
         return all(s.status in ("done", "skipped") for s in self.steps)
+
+    @property
+    def progress(self) -> tuple[int, int]:
+        """Return (done_count, total_count)."""
+        done = sum(1 for s in self.steps if s.status in ("done", "skipped"))
+        return done, len(self.steps)
