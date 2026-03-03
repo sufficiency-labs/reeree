@@ -1,162 +1,168 @@
 # reeree
 
-A dispatch console for LLM workers. Not a chatbot. Roombas, not interns.
+You edit a markdown document. Roombas respond to what you write.
 
 ## What is this?
 
-A terminal-native tool for directing LLM workers at coding tasks. You dispatch intents, watch progress on a heads-up display, and steer with vim commands. The LLMs don't talk to you — they execute, report status, and flag when stuck.
+The interface is a **living markdown document** — your plan. You write steps, annotate them with specs, link to other docs for context. Workers (roombas) pick up steps, read your annotations, execute, and update the checkboxes. You're always editing ahead of them.
 
-Think less "AI pair programmer" and more "fleet of roombas you watch on a map."
+Everything else — worker logs, shell access, file views, diffs — opens as a split pane when you want it and closes when you don't. The document is always there.
+
+Not a chatbot. Not an IDE. A markdown document that things happen to.
 
 ## The Problem
 
-Every LLM coding tool is a chatbot. You type, it types back, you have a conversation. That's wrong. You don't want to *talk* to your tools. You want to *direct* them.
+Every LLM coding tool is a chatbot. You type, it types back, you have a conversation. That's the wrong paradigm. You don't want to *talk* to your tools. You want to *direct* them.
 
-The workflow that actually works is what power users already do by hand: tmux panes, vim editing, shell execution, git discipline, LLM calls when needed. reeree extracts that workflow into a single persistent tool.
+Power users already have the right workflow: tmux for persistence, vim for editing, bash for execution, git for undo. But they're the glue. reeree makes the document the glue instead.
 
-## Design
+## How it works
 
-### Dispatch, not chat
+You're in a persistent terminal session, editing a markdown document:
 
-- Primary input is **intents** and **commands**, not messages
-- The **plan** is the interface — a visible, editable list of steps
-- LLM "thinking" is invisible unless you toggle a debug pane
-- Steering is **spatial** (move/add/delete steps) not conversational ("actually could you also...")
-- LLMs only surface text when genuinely blocked: `BLOCKED: can't find config.yaml — specify path?`
+```markdown
+# Plan: make sync resilient
 
-### Persistent sessions (tmux-style)
-
-- `reeree` starts or reattaches a session
-- Sessions survive terminal death — daemon stays running via Unix domain socket
-- `reeree attach`, `reeree ls`, `reeree kill`
-- Detach with keybinding, reconnect later, plan + state intact
-
-### Multi-pane TUI
-
-```
-┌─── Plan ──────────────┬─── Worker 1 ──────────────┐
-│                       │ STATUS: executing          │
-│ [x] Read sync scripts │ > read scripts/sync.sh     │
-│ [>] Add retry logic   │ > edit: +retry decorator   │
-│ [>] Add heartbeat     │ > write scripts/sync.sh    │
-│ [ ] Test              │ DIFF: +14 -3 lines         │
-│                       ├─── Worker 2 ──────────────┤
-│                       │ STATUS: executing          │
-│                       │ > read scripts/heartbeat   │
-│                       │ > write scripts/hb.sh      │
-│                       │ DIFF: +28 lines (new)      │
-├───────────────────────┴────────────────────────────┤
-│ NORMAL  :add "add logging"  :pause 1  :go  :diff 2│
-└────────────────────────────────────────────────────┘
+- [x] Read current sync scripts [a3f2c01]
+- [>] Add retry logic to sync.sh (worker 1)
+  > max 3 retries, exponential backoff
+  > see [retry patterns](./docs/retry-patterns.md)
+  > done: scripts/test-retry.sh passes
+- [ ] Add heartbeat check
+  > see [heartbeat spec](./docs/heartbeat.md)
+  > done: heartbeat.sh writes timestamp, watchdog reads it
+- [ ] Wire heartbeat into cron
+  > files: scripts/crontab, scripts/watchdog.sh
 ```
 
-### Vim keybindings
+That's the interface. You're editing this document. The roombas are reading it too.
 
-- **Normal mode**: navigate plan, dispatch commands
-- **Insert mode**: type intents, add steps
-- **Command mode (`:`)**: `:go`, `:pause N`, `:kill N`, `:diff N`, `:undo N`, `:plan`, `:add "step"`, `:set autonomy high`
-- No emacs. Someone else can add that if they want.
+- Write a new step → next idle roomba picks it up
+- Add an annotation (`> done: tests pass`) → the roomba reads it as acceptance criteria
+- Link to another doc (`[spec](./docs/spec.md)`) → the roomba follows the link and reads it as context
+- Delete a step → the roomba that was about to start it doesn't
+- Reorder steps → execution order changes
 
-### Plan-as-file
+The document is simultaneously the spec, the status display, the steering wheel, the history, and the context system.
 
-- The plan is a markdown file on disk, not hidden state
-- You can edit it with vim in another pane if you want
-- Workers read the plan, execute their step, update status
-- You see everything. Nothing is invisible.
+## Peeking behind the curtain
 
-### Workers (roombas)
+The document is home base. When you want to look at what a roomba is doing:
 
-- Each step dispatches to a worker with **focused context** (only the files that step needs)
-- Workers run against small context windows — 32K models work fine
-- Independent steps run in **parallel** (multiple roombas)
-- Each worker's status shows in its own pane
-- Workers don't chat. They: read → execute → diff → commit → report status.
+```
+:log 1          → split pane with worker 1's execution stream
+:shell          → split pane with a bash shell
+:diff 3         → split pane showing the diff from step 3
+:file sync.sh   → split pane showing the file
+Ctrl-w q        → close the pane, back to your document
+```
 
-### Git is the undo system
+Every pane is ephemeral. The document is permanent. This is vim's split/buffer model — open a view, use it, close it.
 
-- Every completed step = one git commit
-- `:undo 3` reverts step 3
-- `:undo` reverts the last step
-- Mistakes are always cheap
+```
+┌──────────────────────────┬──────────────────────┐
+│                          │ worker 1 log         │
+│   Your document          │ > read sync.sh       │
+│   (still here,           │ > edit: +@retry      │
+│    still editable)       │ > shell: pytest       │
+│                          │   PASS (3 tests)     │
+│   - [x] Read sync...    │ > git commit a3f2c01 │
+│   - [>] Add retry...    │ STATUS: done          │
+│   - [ ] Add heartbeat   │                      │
+│                          │                      │
+├──────────────────────────┴──────────────────────┤
+│ NORMAL  :log 1                      2 roombas   │
+└─────────────────────────────────────────────────┘
+```
+
+Close the split. Back to full-screen document. Open a shell. Same pattern.
+
+## Key properties
+
+**The document is alive.** Checkboxes update as workers complete steps. Worker assignment shows in real time. Commit hashes appear when steps finish.
+
+**Cross-references are context.** Link to another markdown doc and the worker reads it. Your existing docs, specs, READMEs — they're all feedable context. Just link.
+
+**Annotations are inline specs.** Indent with `> ` under a step to give the worker instructions, acceptance criteria, file hints. The worker reads them before executing.
+
+**Sessions persist.** tmux-style daemon. Kill your terminal, reconnect later, document and workers are right where you left them.
+
+**Git is undo.** Every completed step is a git commit. `:undo 3` reverts step 3. Mistakes cost nothing.
+
+**Any model.** ollama local models by default. Any OpenAI-compatible API. Switch models with `:set model deepseek-v3`. No subscriptions required.
+
+**Vim keybindings.** Normal/insert/command modes. hjkl navigation. `:` commands. Your muscle memory works.
+
+## Commands
+
+```
+# Terminal
+reeree                          # start or reattach session
+reeree "intent goes here"       # start with initial plan generation
+reeree attach [name]            # attach to running session
+reeree ls                       # list sessions
+reeree kill [name]              # kill a session
+
+# Inside the document (command mode)
+:go                             # dispatch pending steps to roombas
+:pause [N]                      # pause worker(s)
+:kill [N]                       # kill worker N
+:add "step description"         # add step to plan
+:del N                          # delete step N
+:move N M                       # move step N to position M
+:diff [N]                       # split: show diff from step N
+:log [N]                        # split: show worker N's execution log
+:file <path>                    # split: show a file
+:shell                          # split: open bash
+:undo [N]                       # git revert step N
+:set autonomy low|medium|high   # approval level for writes
+:set model <name>               # change LLM model
+:q                              # detach (session keeps running)
+:q!                             # kill session and exit
+```
 
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────┐
-│                  reeree daemon                │
-│          (Unix domain socket server)          │
+│                 reeree daemon                 │
+│           (Unix domain socket)               │
 │                                              │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│  │ Worker 1 │  │ Worker 2 │  │ Worker N │   │
-│  │ (step 2) │  │ (step 3) │  │  (idle)  │   │
-│  └────┬─────┘  └────┬─────┘  └──────────┘   │
-│       │              │                        │
-│  ┌────┴──────────────┴──────┐                │
-│  │       Orchestrator        │                │
-│  │  plan.md ←→ workers ←→ git│               │
-│  └────────────┬─────────────┘                │
-│               │                               │
-│  ┌────────────┴─────────────┐                │
-│  │     LLM API (any)        │                │
-│  │  ollama / deepseek / etc  │               │
-│  └──────────────────────────┘                │
+│  ┌────────────────────────────────────────┐  │
+│  │           Orchestrator                  │  │
+│  │  plan.md ←→ worker pool ←→ git         │  │
+│  └────────────┬───────────────────────────┘  │
+│               │                              │
+│  ┌────────┐ ┌────────┐ ┌────────┐           │
+│  │Roomba 1│ │Roomba 2│ │Roomba N│           │
+│  │(step 2)│ │(step 3)│ │ (idle) │           │
+│  └───┬────┘ └───┬────┘ └────────┘           │
+│      │          │                            │
+│  ┌───┴──────────┴──────────────┐             │
+│  │     LLM API (any model)     │             │
+│  └─────────────────────────────┘             │
 └──────────────┬───────────────────────────────┘
                │ Unix domain socket
 ┌──────────────┴───────────────────────────────┐
-│              reeree client (TUI)              │
-│  Textual app — plan pane, worker panes, cmd  │
+│           reeree client (TUI)                │
+│  Textual app — document view + split panes   │
 │  Vim keybindings — attach/detach             │
 └──────────────────────────────────────────────┘
 ```
 
-## Tech Stack
+## Values
 
-- **Language:** Python 3.11+
-- **TUI:** Textual (terminal UI framework)
-- **IPC:** Unix domain socket (tmux-style daemon/client)
-- **LLM:** Any OpenAI-compatible API (ollama, litellm, cloud providers)
-- **VCS:** Git (undo system, one commit per step)
-- **Plan format:** Markdown checkboxes
-- **Editor paradigm:** Vim modal (normal/insert/command)
+Built with [Values-Driven Systems Engineering](https://github.com/robbymeals/values-driven-systems-engineering). See [VALUES.md](VALUES.md) for the full statement.
 
-## Commands
-
-```
-reeree                          # start or reattach session
-reeree "intent goes here"       # start session with initial intent
-reeree attach [session-name]    # attach to running session
-reeree ls                       # list sessions
-reeree kill [session-name]      # kill a session
-
-# Inside TUI (command mode):
-:go                             # dispatch pending steps
-:pause [N]                      # pause worker N (or all)
-:kill [N]                       # kill worker N
-:add "step description"         # add step to plan
-:del N                          # delete step N
-:move N M                       # move step N to position M
-:diff [N]                       # show full diff from step/worker N
-:undo [N]                       # revert step N (git revert)
-:set autonomy low|medium|high   # change approval level
-:set model deepseek-v3          # change model
-:log [N]                        # show full LLM interaction for worker N (debug)
-:q                              # detach (session keeps running)
-:q!                             # kill session and exit
-```
-
-## Values Alignment
-
-This project follows [Values-Driven Systems Engineering](https://github.com/robbymeals/values-driven-systems-engineering).
-
-- **Human agency over AI autonomy** → You dispatch. They execute. The plan is always yours.
-- **Sufficiency over maximalism** → Works with small, cheap, local models. No $200/mo subscription.
-- **Transparency over magic** → Status, diffs, and execution logs are always visible. Nothing hidden.
-- **Reversibility over correctness** → Git-per-step means every mistake is one `:undo` away.
-- **Tool, not agent** → This amplifies your autonomy. It doesn't have its own.
+- **Tool, not agent** → Roombas execute. They don't initiate, suggest, or opine.
+- **Document is the interface** → All state is visible, editable prose. Nothing hidden.
+- **Overlap, not turn-taking** → You edit ahead. Roombas work behind. Nobody waits.
+- **Persistence** → Sessions survive terminal death. Work survives everything (git).
+- **Sufficiency** → $0 with local models. 32K context works fine.
 
 ## Status
 
-Early design / scaffolding. Core modules exist. TUI and daemon architecture in progress.
+Early development. Core modules exist. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
 
 ## License
 
