@@ -65,6 +65,25 @@
 **Alternatives considered:** (a) Custom undo stack — reinventing git poorly. (b) File snapshots — doesn't compose with user's existing git workflow.
 **Consequences:** Requires the project to be a git repo. Creates potentially many small commits (can squash later).
 
+### ADR-007: Orchestrator LLM (Meta-Layer)
+**Status:** Proposed
+**Context:** Different steps need different models. A complex refactor wants Claude Sonnet. A file rename wants a free local model. A vision task needs Gemini. The user shouldn't have to manually pick models per step.
+**Decision:** An orchestrator LLM (can be cheap — even a local model) analyzes each step and recommends which model to use, with cost estimate. It also suggests external tools/services with signup links when relevant. The user approves or overrides.
+**Values served:** Sufficiency Over Maximalism (use the cheapest adequate model per step), Tool Not Agent (recommendations, not decisions)
+**Rationale:** This is how a foreman works — they know which tradesperson to call. The orchestrator doesn't do the work, it dispatches. Cost-aware routing means the user spends $0.003 on a hard step and $0 on an easy one.
+**Alternatives considered:** (a) Single model for everything — wasteful. (b) User picks model per step manually — tedious. (c) Hardcoded rules — too rigid.
+**Consequences:** Needs a model registry with capabilities and pricing. Orchestrator prompt must be reliable about cost estimation.
+**Timeline:** Post-POC. For now, single model for all steps.
+
+### ADR-008: Propagate and Cohere Commands
+**Status:** Proposed
+**Context:** Documents reference each other. When one changes, linked docs may become incoherent.
+**Decision:** Two commands: `:propagate` crawls links from the current doc and checks all referenced docs for coherence. `:cohere doc1 doc2 doc3` checks coherence across an explicit set. Both dispatch "coherence roombas" that read the docs, identify conflicts or stale references, and either flag or propose fixes.
+**Values served:** Plan Is the Interface (the doc tree IS the system), Transparency (conflicts are surfaced, not hidden)
+**Rationale:** This is the constraint cascade from VDSE applied to any doc tree. Edit VALUES.md, propagate checks IMPLEMENTATION.md. Edit a spec, cohere checks if the code matches.
+**Implementation (POC):** Simple LLM calls — "here are two docs, find contradictions." Later: smart crawling, caching, incremental checks.
+**Timeline:** Packaged reasoning calls for POC. Proper engineering in Phase 4-5.
+
 ### ADR-006: Focused Context Per Step
 **Status:** Accepted
 **Context:** Small models (32K context) should work well. Large context is a crutch.
