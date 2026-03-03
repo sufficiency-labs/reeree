@@ -80,3 +80,24 @@ reeree kill [name]              # kill session
 - Plan format is just markdown checkboxes — no custom DSL.
 - Workers are dumb. They get a step, focused context, and execute. No memory between steps.
 - The daemon is simple. Socket server, session state, worker pool. Not Kubernetes.
+
+## Daemon Types (Architecture Note)
+
+Executor daemons are one type. The framework manages any persistent LLM process:
+
+| Type | Trigger | Reads | Writes | Always-on? |
+|------|---------|-------|--------|------------|
+| Executor | dispatched (:go) | plan step + focused context | code, shell, git | no |
+| Coherence | triggered (:propagate, :cohere, on-save) | linked doc tree | conflict flags, update proposals | no |
+| State | always-on | user activity, inputs, patterns | state.md assessment | yes |
+| Forecast | scheduled/triggered | calendar, state, history | forecast.md | no |
+| Orchestrator | on dispatch | step description, model registry | routing decision, cost estimate | no |
+
+All daemons share the same shape:
+- Persistent LLM process with focused context
+- Specific domain and instruction set
+- Read/write interface to files on disk
+- Visible output (split pane in TUI)
+- User can read, edit, override any daemon's output
+
+The TUI, socket architecture, and vim interface are generic daemon management. reeree is the first daemon type, not the only one.
