@@ -198,6 +198,7 @@ async def dispatch_step(
     project_dir: Path,
     config: Config,
     on_log: Callable[[str], None] | None = None,
+    should_continue: Callable[[], bool] | None = None,
 ) -> dict:
     """Execute a single step via multi-turn LLM conversation.
 
@@ -245,6 +246,12 @@ async def dispatch_step(
     log(f"Model: {choice.model} (tier={choice.tier})")
 
     for turn in range(MAX_TURNS):
+        # Check if daemon was killed or paused
+        if should_continue and not should_continue():
+            log("Daemon stopped (killed or paused)")
+            return {"status": "failed", "error": "Daemon stopped by user",
+                    "next_step_notes": next_step_notes}
+
         log(f"LLM call (turn {turn + 1}/{MAX_TURNS})...")
 
         try:

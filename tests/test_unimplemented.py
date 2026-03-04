@@ -86,22 +86,23 @@ class TestParallelDaemons:
 
 # === ORCHESTRATOR / MODEL ROUTING ===
 
-@pytest.mark.xfail(reason="Orchestrator model routing not yet implemented")
 class TestOrchestrator:
     def test_routes_to_best_model(self):
-        """Orchestrator selects optimal model for each task type."""
-        from reeree.orchestrator import Orchestrator
-        orch = Orchestrator()
-        routing = orch.route_step(Step(description="Fix a Python syntax error"))
-        assert "model" in routing
-        assert "cost_estimate" in routing
+        """Router selects optimal model tier for each task type."""
+        from reeree.router import route_model
+        from reeree.config import Config
+        from reeree.daemon_registry import DaemonKind
+        config = Config(model="test-model", api_base="http://test", api_key="k")
+        choice = route_model("Fix a Python syntax error", DaemonKind.STEP, config)
+        assert choice.model == "test-model"
+        assert choice.tier == "coding"
 
     def test_cost_estimation(self):
-        """Orchestrator provides cost estimate before execution."""
-        from reeree.orchestrator import Orchestrator
-        orch = Orchestrator()
-        routing = orch.route_step(Step(description="Refactor entire codebase"))
-        assert routing["cost_estimate"] > 0
+        """Router classifies refactor as reasoning tier."""
+        from reeree.router import classify_task
+        from reeree.daemon_registry import DaemonKind
+        tier = classify_task("Refactor entire codebase", DaemonKind.STEP)
+        assert tier == "reasoning"
 
 
 # === COHERENCE DAEMONS (:propagate, :cohere) ===

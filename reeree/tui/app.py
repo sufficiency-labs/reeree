@@ -507,10 +507,33 @@ class ReereeApp(App):
             self._change_scope(args.strip())
         elif command == "scope":
             self._show_scope()
-        elif command == "pause":
-            self.notify("Pause: not yet implemented")
+        elif command == "pause" and args:
+            try:
+                did = int(args.strip())
+                if self._daemon_registry.pause(did):
+                    self._exec_write(f"[yellow]Paused daemon d{did}[/yellow]")
+                else:
+                    self._exec_write(f"[red]Cannot pause d{did} (not active)[/red]")
+            except ValueError:
+                self.notify("Usage: :pause N", severity="warning")
+        elif command == "resume" and args:
+            try:
+                did = int(args.strip())
+                if self._daemon_registry.resume(did):
+                    self._exec_write(f"[green]Resumed daemon d{did}[/green]")
+                else:
+                    self._exec_write(f"[red]Cannot resume d{did} (not paused)[/red]")
+            except ValueError:
+                self.notify("Usage: :resume N", severity="warning")
         elif command == "kill" and args:
-            self.notify("Kill daemon: not yet implemented")
+            try:
+                did = int(args.strip())
+                if self._daemon_registry.kill(did):
+                    self._exec_write(f"[red]Killed daemon d{did}[/red]")
+                else:
+                    self._exec_write(f"[red]No daemon d{did}[/red]")
+            except ValueError:
+                self.notify("Usage: :kill N", severity="warning")
         elif command == "setup":
             self._launch_setup()
         elif command == "help":
@@ -545,6 +568,11 @@ class ReereeApp(App):
             "  :cd path         Change scope (push context to subrepo)\n"
             "  :cd ..           Pop scope (return to parent context)\n"
             "  :scope           Show current scope stack\n"
+            "  :cohere          Run coherence check on current scope\n"
+            "  :propagate       Crawl cross-references from plan\n"
+            "  :pause N         Pause daemon N\n"
+            "  :resume N        Resume paused daemon N\n"
+            "  :kill N          Kill daemon N (and children)\n"
             "  :setup           Re-run setup wizard\n"
             "  :q / :q! / :wq   Quit (save) / force quit / save+quit\n"
             "  :help            This help\n"
@@ -1472,6 +1500,7 @@ class ReereeApp(App):
                 project_dir=self.project_dir,
                 config=self.config,
                 on_log=on_log,
+                should_continue=lambda: daemon.is_active if daemon else True,
             )
 
             time_str = daemon.elapsed_str if daemon else "?"
