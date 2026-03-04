@@ -762,20 +762,27 @@ class ReereeApp(App):
 
 
 class CommandScreen(ModalScreen[str]):
-    """Vim-style : command input."""
+    """Vim-style : command input — appears at the very bottom of the screen."""
 
     DEFAULT_CSS = """
     CommandScreen {
-        align: center bottom;
+        align: left bottom;
+        background: transparent;
     }
     #cmd-container {
         dock: bottom;
-        height: 1;
+        height: 3;
         width: 100%;
         background: $surface;
     }
+    #cmd-prefix {
+        width: 2;
+        height: 3;
+        content-align: left middle;
+        padding: 1 0 0 1;
+    }
     #cmd-input {
-        width: 100%;
+        width: 1fr;
     }
     """
 
