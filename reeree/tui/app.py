@@ -787,7 +787,36 @@ class ReereeApp(App):
                 f"You are an executor daemon for a coding project.\n"
                 f"You can EXECUTE ACTIONS on the user's machine. You are not a chatbot — you are a daemon.\n"
                 f"When the user asks you to do something, DO IT by including action blocks.\n\n"
+                f"## CRITICAL: Plan-First Workflow\n\n"
+                f"Your FIRST action on any new task MUST be to update the plan. The plan is the shared "
+                f"work queue between you and the user. Before executing anything:\n"
+                f"1. Read the current plan (shown below)\n"
+                f"2. Decompose the user's request into concrete steps\n"
+                f"3. Emit a ```plan block with the updated checklist\n"
+                f"4. THEN start executing steps\n\n"
+                f"The plan uses this exact markdown format:\n"
+                f"```\n"
+                f"# Plan: short description of intent\n\n"
+                f"- [x] Completed step [commit-hash]\n"
+                f"- [>] Currently executing step\n"
+                f"- [ ] Pending step\n"
+                f"  > annotation: extra context or acceptance criteria\n"
+                f"  > files: specific files this step touches\n"
+                f"  > done: how to verify this step is complete\n"
+                f"- [!] Failed step\n"
+                f"```\n\n"
+                f"Status markers: [x]=done, [>]=active, [ ]=pending, [!]=failed\n"
+                f"Annotations are indented lines starting with `> `\n"
+                f"PRESERVE existing completed steps — never remove [x] items.\n\n"
                 f"## Actions you can take\n\n"
+                f"Update the plan (DO THIS FIRST on every new task):\n"
+                f"```plan\n"
+                f"# Plan: intent\n\n"
+                f"- [x] Step 1: Already done thing [abc1234]\n"
+                f"- [ ] Step 2: Next thing to do\n"
+                f"  > done: tests pass\n"
+                f"- [ ] Step 3: Another thing\n"
+                f"```\n\n"
                 f"Run shell commands:\n"
                 f"```shell\n"
                 f"python -m pytest tests/ -v\n"
@@ -800,12 +829,6 @@ class ReereeApp(App):
                 f"```edit:path/to/file.py\n"
                 f"<<<old text>>>\n"
                 f"<<<new text>>>\n"
-                f"```\n\n"
-                f"Update the plan:\n"
-                f"```plan\n"
-                f"# Plan: intent\n\n"
-                f"- [x] Step 1: Done thing\n"
-                f"- [ ] Step 2: Next thing\n"
                 f"```\n\n"
                 f"Read a file:\n"
                 f"```read:path/to/file.py\n"
@@ -823,12 +846,13 @@ class ReereeApp(App):
                 f"This is a MULTI-TURN loop — up to 5 rounds of action→result→action.\n"
                 f"ALWAYS read files before editing them. ALWAYS check git status before committing.\n\n"
                 f"## Rules\n"
+                f"- PLAN FIRST. Always emit a ```plan block before doing work.\n"
                 f"- Be concise. Do the thing, don't describe doing it.\n"
                 f"- If asked to run something, include a ```shell block. Don't say 'you can run...'.\n"
                 f"- If asked to edit code, read the file first, then ```edit or ```write.\n"
-                f"- If asked to update the plan, include a ```plan block.\n"
+                f"- Mark steps [>] when starting them, [x] when done, [!] if failed.\n"
                 f"- Git commit after meaningful changes: ```shell\\ngit add -A && git commit -m 'msg'\\n```\n"
-                f"- When done with all actions, say DONE (no more action blocks).\n\n"
+                f"- When done with all actions, emit a final ```plan with updated statuses, then say DONE.\n\n"
                 f"Project context:\n{context[:8000]}\n\n"
                 f"Current plan:\n{plan_md}\n\n"
             )
@@ -849,7 +873,41 @@ class ReereeApp(App):
             # Multi-turn action loop — up to 5 rounds of LLM → actions → results → LLM
             max_turns = 5
             for turn in range(max_turns):
-                response = await chat_async(self._chat_messages, self.config, system=system)
+                # Show thinking indicator
+                progress = DaemonProgress(
+                    daemon_id=f"chat",
+                    step_desc=f"turn {turn + 1}" if turn > 0 else user_msg[:50],
+                    scope=str(self._project_dir.name),
+                )
+                container = self.query_one("#daemon-progress")
+                container.mount(progress)
+
+                # Stream tokens so user can see the response forming
+                token_buffer = []
+                def on_token(text):
+                    token_buffer.append(text)
+                    # Update progress phase based on content so far
+                    current = "".join(token_buffer)
+                    if "```plan" in current:
+                        progress.set_phase("planning")
+                    elif "```shell" in current:
+                        progress.set_phase("executing")
+                    elif "```edit" in current or "```write" in current:
+                        progress.set_phase("editing")
+                    elif "```read" in current:
+                        progress.set_phase("reading")
+                    else:
+                        progress.set_phase("thinking")
+
+                try:
+                    response = await chat_async(
+                        self._chat_messages, self.config, system=system,
+                        on_token=on_token,
+                    )
+                finally:
+                    elapsed = progress.finish()
+                    progress.remove()
+                    self._exec_write(f"[dim]turn {turn + 1}: {elapsed:.1f}s[/dim]")
 
                 # Add response to history
                 self._chat_messages.append({"role": "assistant", "content": response})
