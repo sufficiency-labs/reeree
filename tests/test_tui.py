@@ -25,11 +25,13 @@ def _make_config() -> Config:
     c = Config.__new__(Config)
     c.api_base = "https://api.together.xyz/v1"
     c.model = "test-model"
-    c.api_key = ""
+    c.api_key = "test-key-for-testing"  # non-empty to prevent setup wizard
     c.autonomy = "medium"
     c.project_dir = "."
     c.plan_file = ".reeree/plan.md"
     c.max_context_tokens = 24000
+    c.models = {}
+    c.routing = {}
     return c
 
 

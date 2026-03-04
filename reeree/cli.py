@@ -16,8 +16,9 @@ from .planner import create_plan
 @click.option("--api-key", help="API key")
 @click.option("--autonomy", type=click.Choice(["low", "medium", "high", "full"]), default="medium")
 @click.option("--project", type=click.Path(exists=True), default=".", help="Project directory")
+@click.option("--setup", is_flag=True, help="Launch setup wizard")
 @click.pass_context
-def main(ctx, intent, model, api_base, api_key, autonomy, project):
+def main(ctx, intent, model, api_base, api_key, autonomy, project, setup):
     """reeree — edit a markdown document. daemons respond to what you write.
 
     Examples:
@@ -64,6 +65,11 @@ def main(ctx, intent, model, api_base, api_key, autonomy, project):
 
     if plan is None:
         plan = Plan(intent="", steps=[])
+
+    # Force first-run setup if --setup flag
+    if setup:
+        config.api_key = ""
+        config.models = {}
 
     # Launch TUI
     from .tui.app import ReereeApp

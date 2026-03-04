@@ -366,12 +366,33 @@ class ReereeApp(App):
         # Start heartbeat timer for always-on daemons
         self._heartbeat_timer = self.set_interval(120, self._daemon_heartbeat)
 
+        # First-run setup wizard
+        if self.config.is_first_run():
+            self._launch_setup()
+
     def _update_status(self) -> None:
         status = self.query_one("#status-bar", StatusBar)
         if self.plan.steps:
             status.progress = self.plan.progress
         status.active_daemons = self._daemon_registry.active_count
         status.daemon_count = self._daemon_registry.total_count
+
+    def _launch_setup(self) -> None:
+        """Launch the setup wizard (first-run or :setup command)."""
+        from .setup_screen import SetupScreen
+
+        def on_setup_done(config: Config | None) -> None:
+            if config is None:
+                return
+            self.config = config
+            config.save(self.project_dir / ".reeree" / "config.json")
+            self._exec_write("[green]Configuration saved[/green]")
+            self._exec_write(f"  model: {config.model}")
+            self._exec_write(f"  api: {config.api_base}")
+            self._exec_write(f"  autonomy: {config.autonomy}")
+            self._update_status()
+
+        self.push_screen(SetupScreen(self.config), on_setup_done)
 
     def _exec_write(self, message: str) -> None:
         """Write to the execution log (right pane) and file log."""
@@ -490,6 +511,8 @@ class ReereeApp(App):
             self.notify("Pause: not yet implemented")
         elif command == "kill" and args:
             self.notify("Kill daemon: not yet implemented")
+        elif command == "setup":
+            self._launch_setup()
         elif command == "help":
             self._show_help()
         else:
@@ -522,6 +545,7 @@ class ReereeApp(App):
             "  :cd path         Change scope (push context to subrepo)\n"
             "  :cd ..           Pop scope (return to parent context)\n"
             "  :scope           Show current scope stack\n"
+            "  :setup           Re-run setup wizard\n"
             "  :q / :q! / :wq   Quit (save) / force quit / save+quit\n"
             "  :help            This help\n"
         )
