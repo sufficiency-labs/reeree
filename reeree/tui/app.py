@@ -285,6 +285,9 @@ class ReereeApp(App):
         self._chat_messages: list[dict] = []
         self._chat_target = "executor"  # which daemon type we're chatting with
         self._chat_busy = False
+        # Scope stack — context telescoping within a session
+        # Each entry: (project_dir, plan, daemons, chat_messages, chat_target)
+        self._scope_stack: list[tuple] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -423,6 +426,10 @@ class ReereeApp(App):
             self._toggle_chat(args)
         elif command == "close":
             self._toggle_chat_off()
+        elif command == "cd":
+            self._change_scope(args.strip())
+        elif command == "scope":
+            self._show_scope()
         elif command == "pause":
             self.notify("Pause: not yet implemented")
         elif command == "kill" and args:
@@ -456,9 +463,122 @@ class ReereeApp(App):
             "  :chat            Toggle chat (executor daemon)\n"
             "  :chat coherence  Chat with coherence daemon\n"
             "  :chat state      Chat with state daemon\n"
+            "  :cd path         Change scope (push context to subrepo)\n"
+            "  :cd ..           Pop scope (return to parent context)\n"
+            "  :scope           Show current scope stack\n"
             "  :q / :q! / :wq   Quit (save) / force quit / save+quit\n"
             "  :help            This help\n"
         )
+
+    def _change_scope(self, path: str) -> None:
+        """Change execution scope — context telescoping within a session.
+
+        :cd sandbox      Push into sandbox/, new executor context
+        :cd ..            Pop back to parent scope
+        :cd               Show current scope (same as :scope)
+
+        The parent context doesn't disappear — it's on the stack.
+        Daemons from the parent scope keep running.
+        The new scope inherits parent CLAUDE.md context automatically
+        (via context.py's _find_parent_contexts).
+        """
+        if not path:
+            self._show_scope()
+            return
+
+        if path == "..":
+            # Pop scope — return to parent
+            if not self._scope_stack:
+                self._exec_write("[yellow]Already at root scope[/yellow]")
+                return
+
+            # Save current scope state
+            self._save_plan()
+
+            # Restore parent scope
+            parent = self._scope_stack.pop()
+            (self.project_dir, self.plan, parent_daemons,
+             parent_chat, parent_target) = parent
+
+            # Merge: parent daemons + any new daemons from child scope
+            # Child daemons keep running — they just move to "background"
+            self._daemons.update(parent_daemons)
+            self._chat_messages = parent_chat
+            self._chat_target = parent_target
+
+            # Reload plan in editor
+            editor = self.query_one("#plan-editor", PlanEditor)
+            editor.load_plan(self.plan)
+            self._update_status()
+            self.sub_title = str(self.project_dir.name)
+            self._exec_write(f"[bold]Scope: {self.project_dir}[/bold]")
+            self._flog.info(f"Scope popped to: {self.project_dir}")
+            return
+
+        # Push scope — descend into child directory
+        new_dir = (self.project_dir / path).resolve()
+        if not new_dir.exists():
+            self._exec_write(f"[red]Directory not found: {path}[/red]")
+            return
+        if not new_dir.is_dir():
+            self._exec_write(f"[red]Not a directory: {path}[/red]")
+            return
+
+        # Save current scope to stack
+        self._save_plan()
+        self._scope_stack.append((
+            self.project_dir,
+            self.plan,
+            dict(self._daemons),  # snapshot of daemon state
+            list(self._chat_messages),
+            self._chat_target,
+        ))
+
+        # Switch to new scope
+        self.project_dir = new_dir
+        self._chat_messages = []  # Fresh chat for new scope
+        self._chat_target = "executor"
+
+        # Load plan from new scope if it exists
+        new_plan_path = new_dir / ".reeree" / "plan.md"
+        if new_plan_path.exists():
+            self.plan = Plan.load(new_plan_path)
+        else:
+            self.plan = Plan(intent="", steps=[])
+
+        editor = self.query_one("#plan-editor", PlanEditor)
+        editor.load_plan(self.plan)
+        self._update_status()
+        self.sub_title = str(new_dir.name)
+
+        # Show scope info
+        scope_depth = len(self._scope_stack)
+        parent_names = " > ".join(s[0].name for s in self._scope_stack)
+        self._exec_write(
+            f"[bold]Scope: {parent_names} > {new_dir.name}[/bold]\n"
+            f"[dim]Depth: {scope_depth}  |  Parent context inherited  |  :cd .. to return[/dim]"
+        )
+        self._flog.info(f"Scope pushed to: {new_dir}")
+
+    def _show_scope(self) -> None:
+        """Show the current scope stack."""
+        lines = ["[bold]Scope stack:[/bold]"]
+        for i, (pdir, plan, daemons, _chat, _target) in enumerate(self._scope_stack):
+            active = sum(1 for d in daemons.values() if d.get("status") == "active")
+            done, total = plan.progress if plan.steps else (0, 0)
+            lines.append(
+                f"  {'  ' * i}{pdir.name}/  "
+                f"[dim]{done}/{total} steps, {active} active daemons[/dim]"
+            )
+        # Current scope
+        depth = len(self._scope_stack)
+        active = sum(1 for d in self._daemons.values() if d.get("status") == "active")
+        done, total = self.plan.progress if self.plan.steps else (0, 0)
+        lines.append(
+            f"  {'  ' * depth}[bold]{self.project_dir.name}/[/bold]  "
+            f"[dim]{done}/{total} steps, {active} active daemons[/dim]  ← current"
+        )
+        self._exec_write("\n".join(lines))
 
     def _toggle_chat(self, target: str = "") -> None:
         panel = self.query_one("#chat-panel")
@@ -568,6 +688,17 @@ class ReereeApp(App):
                 f"Project context:\n{context[:8000]}\n\n"
                 f"Current plan:\n{plan_md}\n\n"
             )
+            # Include parent scope context if we're in a child scope
+            if self._scope_stack:
+                parent_ctx = []
+                for pdir, pplan, _daemons, _chat, _target in self._scope_stack:
+                    parent_ctx.append(f"Parent scope: {pdir.name}")
+                    if pplan.intent:
+                        parent_ctx.append(f"  Plan: {pplan.intent}")
+                    claude_md = pdir / "CLAUDE.md"
+                    if claude_md.exists():
+                        parent_ctx.append(f"  {claude_md.read_text()[:2000]}")
+                system += f"Parent context (ambient):\n{''.join(parent_ctx)[:4000]}\n\n"
             if daemon_history:
                 system += f"Recent execution:\n{daemon_history[:2000]}\n"
 
