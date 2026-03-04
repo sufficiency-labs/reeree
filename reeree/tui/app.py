@@ -1,6 +1,7 @@
 """Main Textual application — the living document."""
 
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from textual.app import App, ComposeResult
@@ -13,6 +14,52 @@ from textual import events, on
 
 from ..config import Config
 from ..plan import Plan
+
+
+class DaemonProgress(Static):
+    """Live progress indicator for an active daemon.
+
+    Updates in-place: spinner + daemon ID + step + elapsed time.
+    Mounted into the progress container, removed when daemon completes.
+    """
+
+    SPINNERS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+    def __init__(self, daemon_id: int, step_desc: str, scope: str = "", **kwargs):
+        super().__init__(**kwargs)
+        self.daemon_id = daemon_id
+        self.step_desc = step_desc
+        self.scope = scope
+        self._start_time = time.monotonic()
+        self._frame = 0
+        self._phase = "starting"
+        self._detail = ""
+
+    def on_mount(self) -> None:
+        self._timer = self.set_interval(1 / 8, self._tick)
+
+    def _tick(self) -> None:
+        self._frame += 1
+        elapsed = time.monotonic() - self._start_time
+        spinner = self.SPINNERS[self._frame % len(self.SPINNERS)]
+        mins, secs = divmod(int(elapsed), 60)
+        time_str = f"{mins}:{secs:02d}" if mins else f"{secs}s"
+        scope_tag = f":{self.scope}" if self.scope else ""
+        detail = f"  {self._detail}" if self._detail else ""
+        self.update(
+            f"  [cyan]{spinner}[/cyan] [bold]d{self.daemon_id}{scope_tag}[/bold] "
+            f"{self.step_desc}  [dim]{self._phase} {time_str}{detail}[/dim]"
+        )
+
+    def set_phase(self, phase: str, detail: str = "") -> None:
+        """Update what the daemon is doing: 'reading context', 'calling LLM', 'editing files'..."""
+        self._phase = phase
+        self._detail = detail
+
+    def finish(self) -> float:
+        """Stop the timer, return elapsed seconds."""
+        self._timer.stop()
+        return time.monotonic() - self._start_time
 
 
 def _setup_file_logger(project_dir: Path) -> logging.Logger:
@@ -243,6 +290,12 @@ class ReereeApp(App):
     #right-panel {
         width: 60%;
     }
+    #daemon-progress {
+        height: auto;
+        max-height: 8;
+        border-left: solid $primary;
+        border-bottom: solid $primary-darken-2;
+    }
     #exec-log {
         height: 1fr;
         border-left: solid $primary;
@@ -296,6 +349,7 @@ class ReereeApp(App):
         with Horizontal(id="main-layout"):
             yield PlanEditor(self.plan, id="plan-editor")
             with Vertical(id="right-panel"):
+                yield Vertical(id="daemon-progress")
                 yield RichLog(id="exec-log", highlight=True, markup=True, wrap=True)
                 with Vertical(id="chat-panel"):
                     yield Input(placeholder="chat with daemon (type 'exit' to close)", id="chat-input")
@@ -1036,14 +1090,52 @@ class ReereeApp(App):
 
     async def _run_daemon_task(self, daemon_id: int, step, step_index: int) -> None:
         from ..daemon_executor import dispatch_step
+
+        # Mount progress widget
+        scope = self._daemons[daemon_id].get("scope", "")
+        progress = DaemonProgress(
+            daemon_id, step.description, scope=scope,
+            id=f"dp-{daemon_id}",
+        )
+        progress_container = self.query_one("#daemon-progress")
+        await progress_container.mount(progress)
+
+        def on_log(msg, did=daemon_id):
+            self._daemon_log(did, msg)
+            # Update progress phase from log messages
+            try:
+                pw = self.query_one(f"#dp-{did}", DaemonProgress)
+                msg_lower = msg.lower()
+                if "context" in msg_lower or "reading" in msg_lower:
+                    pw.set_phase("reading")
+                elif "llm" in msg_lower or "calling" in msg_lower or "api" in msg_lower:
+                    pw.set_phase("thinking")
+                elif "edit" in msg_lower or "writ" in msg_lower:
+                    pw.set_phase("editing")
+                elif "commit" in msg_lower or "git" in msg_lower:
+                    pw.set_phase("committing")
+                elif "test" in msg_lower or "pytest" in msg_lower:
+                    pw.set_phase("testing")
+                elif "shell" in msg_lower or "$" in msg:
+                    pw.set_phase("running")
+            except Exception:
+                pass
+
         try:
             result = await dispatch_step(
                 step=step,
                 step_index=step_index,
                 project_dir=self.project_dir,
                 config=self.config,
-                on_log=lambda msg, did=daemon_id: self._daemon_log(did, msg),
+                on_log=on_log,
             )
+
+            # Remove progress widget
+            elapsed = progress.finish()
+            await progress.remove()
+            mins, secs = divmod(int(elapsed), 60)
+            time_str = f"{mins}:{secs:02d}" if mins else f"{secs}s"
+
             editor = self.query_one("#plan-editor", PlanEditor)
             status = result.get("status", "failed")
             commit_hash = result.get("commit_hash")
@@ -1054,23 +1146,37 @@ class ReereeApp(App):
                 self.plan.steps[step_index].commit_hash = commit_hash
                 self._save_plan()
                 summary = result.get('summary', '')
-                self._exec_write(f"[green]✓ Daemon {daemon_id} done:[/green] {summary}")
-                if commit_hash:
-                    self._exec_write(f"  [dim]commit: {commit_hash}[/dim]")
+                hash_str = f" [{commit_hash[:7]}]" if commit_hash else ""
+                self._exec_write(
+                    f"[green]✓[/green] [bold]d{daemon_id}[/bold] "
+                    f"{step.description}{hash_str}  [dim]{time_str}[/dim]"
+                )
+                if summary:
+                    self._exec_write(f"  [dim]{summary}[/dim]")
             else:
                 editor.update_step_status(step_index, "failed")
                 self.plan.steps[step_index].status = "failed"
                 self.plan.steps[step_index].error = result.get("error", "unknown")
                 self._save_plan()
-                self._exec_write(f"[red]✗ Daemon {daemon_id} failed:[/red] {result.get('error', '')}")
+                self._exec_write(
+                    f"[red]✗[/red] [bold]d{daemon_id}[/bold] "
+                    f"{step.description}  [dim]{time_str}[/dim]  "
+                    f"[red]{result.get('error', '')}[/red]"
+                )
 
             self._daemons[daemon_id]["status"] = status
             self._update_status()
 
         except Exception as e:
+            # Clean up progress widget on exception
+            try:
+                progress.finish()
+                await progress.remove()
+            except Exception:
+                pass
             self._daemon_log(daemon_id, f"EXCEPTION: {e}")
             self._daemons[daemon_id]["status"] = "failed"
-            self._exec_write(f"[red]✗ Daemon {daemon_id} exception:[/red] {e}")
+            self._exec_write(f"[red]✗ d{daemon_id} exception:[/red] {e}")
             self._update_status()
 
     def _run_daemon(self, daemon_id: int, step, step_index: int) -> None:
@@ -1083,9 +1189,10 @@ class ReereeApp(App):
             # Show scope tag if daemon is from a different scope than current
             scope = self._daemons[daemon_id].get("scope", "")
             if scope and scope != self.project_dir.name:
-                self._exec_write(f"  [dim][d{daemon_id}:{scope}][/dim] {message}")
+                # Background daemon from another scope — quieter output
+                self._flog.info(f"[d{daemon_id}:{scope}] {message}")
                 return
-        # Stream daemon output to exec log
+        # Stream daemon output to exec log + file log
         self._exec_write(f"  [dim][d{daemon_id}][/dim] {message}")
 
     async def _undo_step(self, step_str: str) -> None:
