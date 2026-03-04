@@ -69,10 +69,68 @@ reeree kill [name]              # kill session
 ```
 
 ## Development
+
+### Setup
+```bash
+source /mnt/vorkosigan_data_v2/vorkosigan/.venv/bin/activate
+cd /mnt/vorkosigan_data_v2/vorkosigan/private/reeree
+pip install -e .
+```
+
+### Running
+```bash
+# Launch TUI with a new plan
+reeree --project sandbox "add error handling to the scraper"
+
+# Launch TUI, resume existing plan
+reeree --project sandbox
+
+# Inside TUI: NORMAL mode by default
+#   i         → INSERT mode (edit the plan)
+#   Escape    → back to NORMAL
+#   :         → COMMAND mode
+#   :go       → dispatch daemons for pending steps
+#   :help     → full command reference
+```
+
+### Testing
+```bash
+# Run all tests
+python -m pytest tests/ -v
+
+# Run just unit tests (no API calls)
+python -m pytest tests/ -v -k "not (test_basic_response or test_json_response or test_system_prompt or test_edit_step or test_write_step or test_logging_callback)"
+
+# Run integration tests (requires together.ai key at ~/.config/together/api_key)
+python -m pytest tests/test_daemon_executor.py tests/test_llm.py -v
+
+# See xfail tests (unimplemented features)
+python -m pytest tests/test_unimplemented.py -v
+```
+
+### Self-testing from Claude Code
+The TUI requires a real terminal, but the daemon executor can be tested headlessly:
+```python
+import asyncio
+from pathlib import Path
+from reeree.config import Config
+from reeree.plan import Step
+from reeree.daemon_executor import dispatch_step
+
+async def test():
+    config = Config()
+    step = Step(description="Add a docstring to main()", files=["scraper.py"])
+    result = await dispatch_step(step=step, step_index=0, project_dir=Path("sandbox"), config=config, on_log=print)
+    print(result)
+
+asyncio.run(test())
+```
+
+### Dependencies
 - Python 3.11+
-- Dependencies: textual (TUI), httpx (LLM API), click (CLI entry), gitpython (git ops)
-- Test against sandbox/ project during development
-- Run with local ollama for free iteration
+- textual (TUI), httpx (LLM API), click (CLI), gitpython (git), tree-sitter-markdown (syntax)
+- LLM: together.ai with Qwen3-Coder-480B-A35B-Instruct-FP8 (default), any OpenAI-compatible API
+- API key: `~/.config/together/api_key` or `TOGETHER_API_KEY` env var
 
 ## Conventions
 - Keep it simple. Target ~3-5K lines total, not a framework.

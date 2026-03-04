@@ -14,29 +14,28 @@ from ..plan import Plan
 
 
 class PlanEditor(TextArea):
-    """The plan document — a TextArea with plan-aware rendering.
+    """The plan document — a TextArea with vim-style modal editing.
 
-    This is the primary interface. The user edits markdown.
-    Daemons read and update the same content.
+    NORMAL mode: read-only, hjkl nav, : for commands, i to edit
+    INSERT mode: full editing, Escape returns to NORMAL
     """
 
-    BINDINGS = [
-        Binding("escape", "normal_mode", "Normal mode", show=False),
-    ]
+    vim_mode = reactive("NORMAL")
 
     def __init__(self, plan: Plan | None = None, **kwargs):
-        # Try markdown highlighting, fall back to plain text
         try:
             super().__init__(
                 language="markdown",
                 theme="monokai",
                 show_line_numbers=True,
+                read_only=True,  # Start in NORMAL mode
                 **kwargs,
             )
         except Exception:
             super().__init__(
                 theme="monokai",
                 show_line_numbers=True,
+                read_only=True,
                 **kwargs,
             )
         if plan:
@@ -44,26 +43,106 @@ class PlanEditor(TextArea):
 
     def load_plan(self, plan: Plan) -> None:
         """Load a plan into the editor."""
+        was_readonly = self.read_only
+        self.read_only = False
         self.text = plan.to_markdown()
+        self.read_only = was_readonly
 
     def get_plan(self) -> Plan:
         """Parse the current editor content as a Plan."""
         return Plan.from_markdown(self.text)
 
     def update_step_status(self, step_index: int, status: str, commit_hash: str | None = None) -> None:
-        """Update a step's status in the document without disrupting the user's cursor."""
+        """Update a step's status without disrupting the user's cursor."""
         plan = self.get_plan()
         if 0 <= step_index < len(plan.steps):
             plan.steps[step_index].status = status
             if commit_hash:
                 plan.steps[step_index].commit_hash = commit_hash
-            # Preserve cursor position
             cursor = self.cursor_location
+            was_readonly = self.read_only
+            self.read_only = False
             self.text = plan.to_markdown()
+            self.read_only = was_readonly
             try:
                 self.cursor_location = cursor
             except Exception:
                 pass
+
+    def _enter_insert_mode(self) -> None:
+        """Switch to INSERT mode — editable."""
+        self.read_only = False
+        self.vim_mode = "INSERT"
+        app = self.app
+        if isinstance(app, ReereeApp):
+            app.query_one("#status-bar", StatusBar).mode = "INSERT"
+
+    def _enter_normal_mode(self) -> None:
+        """Switch to NORMAL mode — read-only, commands work."""
+        self.read_only = True
+        self.vim_mode = "NORMAL"
+        app = self.app
+        if isinstance(app, ReereeApp):
+            app.query_one("#status-bar", StatusBar).mode = "NORMAL"
+
+    def on_key(self, event: events.Key) -> None:
+        if self.vim_mode == "NORMAL":
+            # NORMAL mode keybindings
+            if event.key == "i":
+                self._enter_insert_mode()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "a":
+                self._enter_insert_mode()
+                # Move cursor right one (append)
+                event.prevent_default()
+                event.stop()
+            elif event.key == "o":
+                # Open line below
+                self._enter_insert_mode()
+                self.action_cursor_line_end()
+                self.read_only = False
+                self.insert("\n")
+                event.prevent_default()
+                event.stop()
+            elif event.key == "colon":
+                # Enter command mode
+                app = self.app
+                if isinstance(app, ReereeApp):
+                    app.action_command_mode()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "j":
+                self.action_cursor_down()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "k":
+                self.action_cursor_up()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "h":
+                self.action_cursor_left()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "l":
+                self.action_cursor_right()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "g":
+                # gg = go to top (simplified: single g goes to top)
+                self.action_cursor_line_start()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "G":
+                self.action_cursor_line_end()
+                event.prevent_default()
+                event.stop()
+
+        elif self.vim_mode == "INSERT":
+            if event.key == "escape":
+                self._enter_normal_mode()
+                event.prevent_default()
+                event.stop()
 
 
 class DaemonLog(RichLog):
@@ -88,7 +167,6 @@ class FileViewer(TextArea):
         content = ""
         if file_path.exists():
             content = file_path.read_text()
-        # Guess language from extension
         lang_map = {
             ".py": "python", ".js": "javascript", ".ts": "typescript",
             ".md": "markdown", ".json": "json", ".yaml": "yaml",
@@ -96,15 +174,25 @@ class FileViewer(TextArea):
             ".toml": "toml", ".html": "html", ".css": "css",
         }
         lang = lang_map.get(file_path.suffix, None)
-        super().__init__(
-            content,
-            language=lang,
-            theme="monokai",
-            read_only=True,
-            show_line_numbers=True,
-            id=f"file-{file_path.name}",
-            **kwargs,
-        )
+        try:
+            super().__init__(
+                content,
+                language=lang,
+                theme="monokai",
+                read_only=True,
+                show_line_numbers=True,
+                id=f"file-{file_path.name}",
+                **kwargs,
+            )
+        except Exception:
+            super().__init__(
+                content,
+                theme="monokai",
+                read_only=True,
+                show_line_numbers=True,
+                id=f"file-{file_path.name}",
+                **kwargs,
+            )
 
 
 class StatusBar(Static):
@@ -125,7 +213,7 @@ class StatusBar(Static):
         color = mode_colors.get(self.mode, "bold white")
         progress_str = f"{done}/{total}" if total > 0 else "no plan"
         daemon_str = f"{self.active_daemons} active" if self.active_daemons else "idle"
-        return f" [{color}]{self.mode}[/{color}]  |  daemons: {daemon_str}  |  progress: {progress_str}"
+        return f" [{color}]{self.mode}[/{color}]  |  daemons: {daemon_str}  |  progress: {progress_str}  |  [dim]:go :add :diff :q  i=edit Esc=normal[/dim]"
 
 
 class CommandInput(TextArea):
@@ -138,7 +226,7 @@ class CommandInput(TextArea):
             **kwargs,
         )
         self.styles.height = 1
-        self.display = False  # Hidden until : pressed
+        self.display = False
 
 
 class ReereeApp(App):
@@ -180,7 +268,6 @@ class ReereeApp(App):
     """
 
     BINDINGS = [
-        Binding("colon", "command_mode", "Command mode", show=False),
         Binding("ctrl+w", "close_split", "Close split", show=False),
     ]
 
@@ -303,8 +390,39 @@ class ReereeApp(App):
             self._kill_daemon(args)
         elif command == "close":
             self.action_close_split()
+        elif command == "help":
+            self._show_help()
         else:
             self.notify(f"Unknown command: {command}", severity="error")
+
+    def _show_help(self) -> None:
+        """Show command reference."""
+        self.show_side_panel(
+            "NORMAL MODE:\n"
+            "  i        Enter INSERT mode\n"
+            "  :        Enter COMMAND mode\n"
+            "  hjkl     Navigate\n"
+            "  Esc      Return to NORMAL from INSERT\n"
+            "\n"
+            "COMMANDS:\n"
+            "  :go              Dispatch pending steps\n"
+            "  :add \"desc\"      Add a step\n"
+            "  :del N           Delete step N\n"
+            "  :move N M        Move step N to position M\n"
+            "  :diff [N]        Show diff for step N\n"
+            "  :log [N]         Show daemon N log\n"
+            "  :file path       View a file\n"
+            "  :undo [N]        Revert last step\n"
+            "  :set key value   Set config (model, autonomy)\n"
+            "  :propagate       Check coherence on linked docs\n"
+            "  :cohere d1 d2    Check coherence across docs\n"
+            "  :w               Save plan\n"
+            "  :q               Quit\n"
+            "  :wq              Save and quit\n"
+            "  :help            This help\n"
+            "  Ctrl+W           Close side panel\n",
+            title="Help",
+        )
 
     def _save_plan(self) -> None:
         """Save plan from editor to disk."""
@@ -367,7 +485,6 @@ class ReereeApp(App):
                 else:
                     self.notify("Step has no commit yet", severity="warning")
             else:
-                # Show last diff
                 from ..executor import run_shell
                 result = run_shell("git diff HEAD~1 HEAD", self.project_dir)
                 self.show_side_panel(result.output or "No diff", title="Last diff")
@@ -415,7 +532,7 @@ class ReereeApp(App):
             self.notify("No pending steps to dispatch")
             return
 
-        for idx, step in pending[:2]:  # Max 2 parallel daemons for POC
+        for idx, step in pending[:2]:  # Max 2 parallel for POC
             daemon_id = self._next_daemon_id
             self._next_daemon_id += 1
             step.status = "active"
@@ -425,7 +542,6 @@ class ReereeApp(App):
             self._update_status()
             self.notify(f"Daemon {daemon_id}: {step.description[:50]}")
 
-            # Launch daemon as background async task
             self._run_daemon(daemon_id, step, idx)
 
     async def _run_daemon_task(self, daemon_id: int, step, step_index: int) -> None:
@@ -439,7 +555,6 @@ class ReereeApp(App):
                 config=self.config,
                 on_log=lambda msg, did=daemon_id: self._daemon_log(did, msg),
             )
-            # Update step status based on result
             editor = self.query_one("#plan-editor", PlanEditor)
             status = result.get("status", "failed")
             commit_hash = result.get("commit_hash")
@@ -488,7 +603,6 @@ class ReereeApp(App):
     async def _propagate(self) -> None:
         """Propagate: crawl links from current doc, check coherence."""
         self.notify("Propagate: dispatching coherence daemons on linked docs...")
-        # TODO: implement propagation crawler
         self.show_side_panel(
             "Propagate crawls links from the current document and checks\n"
             "all referenced docs for coherence with your edits.\n\n"
@@ -503,7 +617,6 @@ class ReereeApp(App):
             self.notify("Usage: :cohere doc1.md doc2.md doc3.md", severity="warning")
             return
         self.notify(f"Cohere: checking {len(docs)} docs for consistency...")
-        # TODO: implement coherence checker
         self.show_side_panel(
             f"Cohere checks coherence across:\n" +
             "\n".join(f"  - {d}" for d in docs) +
@@ -512,11 +625,9 @@ class ReereeApp(App):
         )
 
     def _pause_daemon(self, daemon_str: str) -> None:
-        """Pause a daemon."""
         self.notify("Pause: not yet implemented")
 
     def _kill_daemon(self, daemon_str: str) -> None:
-        """Kill a daemon."""
         self.notify("Kill daemon: not yet implemented")
 
 
