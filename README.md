@@ -214,8 +214,17 @@ Daemons are processes. Some are short-lived (execute a step and exit), some are 
 ```
 reeree/
 ├── README.md              # This file (project overview + dev guide)
+├── CLAUDE.md              # AI assistant development context
 ├── pyproject.toml         # Package config
-├── reeree/                # Python package (~3,650 lines)
+├── VALUES.md              # Why we build (8 principles + red lines)
+├── IMPLEMENTATION.md      # What we've decided (ADR index + current state)
+├── PROJECT_PLAN.md        # What's next (8-phase roadmap)
+├── COST.md / REVENUE.md / PROFIT.md  # Economics
+├── docs/                  # VDSE documentation hub
+│   ├── README.md          # Navigation hub
+│   ├── GASTOWN_COMPARISON.md
+│   └── strategic/decisions/  # 10 standalone ADRs
+├── reeree/                # Python package (~4,000 lines)
 │   ├── cli.py             # Entry point — start/attach/ls/kill sessions
 │   ├── config.py          # Configuration (single model + multi-model routing)
 │   ├── context.py         # Load focused context per step
@@ -223,14 +232,17 @@ reeree/
 │   ├── daemon_registry.py # Daemon lifecycle management (hierarchy, pause/kill)
 │   ├── executor.py        # File edits, shell commands, git ops, safety
 │   ├── llm.py             # LLM API interface (OpenAI-compatible, model overrides)
+│   ├── message_bus.py     # Inter-daemon communication (typed messages)
 │   ├── plan.py            # Plan/Step data model + markdown serialization
 │   ├── planner.py         # Intent → step list decomposition
+│   ├── plugin.py          # Plugin base class + entry point discovery
 │   ├── router.py          # Model routing (reasoning/coding/fast tiers)
+│   ├── session.py         # Session state serialization
 │   └── tui/               # TUI components
 │       ├── app.py         # Main Textual application (vim modal, commands)
 │       ├── daemon_tree.py # Hierarchical daemon display widget
 │       └── setup_screen.py # First-run setup wizard ("character creation")
-├── tests/                 # Test suite (230 passing, 19 xfailed)
+├── tests/                 # Test suite (230+ passing, 19 xfailed)
 ├── sandbox/               # Test project for development
 └── .gitignore
 ```
