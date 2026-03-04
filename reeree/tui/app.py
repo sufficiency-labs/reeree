@@ -286,7 +286,9 @@ class ReereeApp(App):
         self._chat_target = "executor"  # which daemon type we're chatting with
         self._chat_busy = False
         # Scope stack — context telescoping within a session
-        # Each entry: (project_dir, plan, daemons, chat_messages, chat_target)
+        # Each entry: (project_dir, plan, chat_messages, chat_target)
+        # Daemons are NOT scoped — they're global to the session.
+        # All daemon output goes to the shared exec log regardless of active scope.
         self._scope_stack: list[tuple] = []
 
     def compose(self) -> ComposeResult:
@@ -497,12 +499,11 @@ class ReereeApp(App):
 
             # Restore parent scope
             parent = self._scope_stack.pop()
-            (self.project_dir, self.plan, parent_daemons,
+            (self.project_dir, self.plan,
              parent_chat, parent_target) = parent
 
-            # Merge: parent daemons + any new daemons from child scope
-            # Child daemons keep running — they just move to "background"
-            self._daemons.update(parent_daemons)
+            # Daemons are global — they keep running, keep printing to exec log.
+            # Only chat and plan are scoped.
             self._chat_messages = parent_chat
             self._chat_target = parent_target
 
@@ -524,12 +525,11 @@ class ReereeApp(App):
             self._exec_write(f"[red]Not a directory: {path}[/red]")
             return
 
-        # Save current scope to stack
+        # Save current scope to stack (daemons are global, not scoped)
         self._save_plan()
         self._scope_stack.append((
             self.project_dir,
             self.plan,
-            dict(self._daemons),  # snapshot of daemon state
             list(self._chat_messages),
             self._chat_target,
         ))
@@ -562,21 +562,20 @@ class ReereeApp(App):
 
     def _show_scope(self) -> None:
         """Show the current scope stack."""
-        lines = ["[bold]Scope stack:[/bold]"]
-        for i, (pdir, plan, daemons, _chat, _target) in enumerate(self._scope_stack):
-            active = sum(1 for d in daemons.values() if d.get("status") == "active")
+        active_total = sum(1 for d in self._daemons.values() if d.get("status") == "active")
+        lines = [f"[bold]Scope stack:[/bold]  [dim]({active_total} daemons running globally)[/dim]"]
+        for i, (pdir, plan, _chat, _target) in enumerate(self._scope_stack):
             done, total = plan.progress if plan.steps else (0, 0)
             lines.append(
                 f"  {'  ' * i}{pdir.name}/  "
-                f"[dim]{done}/{total} steps, {active} active daemons[/dim]"
+                f"[dim]{done}/{total} steps[/dim]"
             )
         # Current scope
         depth = len(self._scope_stack)
-        active = sum(1 for d in self._daemons.values() if d.get("status") == "active")
         done, total = self.plan.progress if self.plan.steps else (0, 0)
         lines.append(
             f"  {'  ' * depth}[bold]{self.project_dir.name}/[/bold]  "
-            f"[dim]{done}/{total} steps, {active} active daemons[/dim]  ← current"
+            f"[dim]{done}/{total} steps[/dim]  ← current"
         )
         self._exec_write("\n".join(lines))
 
@@ -944,7 +943,7 @@ class ReereeApp(App):
             self._next_daemon_id += 1
             step.status = "active"
             step.daemon_id = daemon_id
-            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": ""}
+            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": "", "scope": self.project_dir.name}
             editor.update_step_status(idx, "active")
             self._exec_write(f"[cyan]▶ Daemon {daemon_id}:[/cyan] Step {idx+1} — {step.description}")
             self._run_daemon(daemon_id, step, idx)
@@ -973,7 +972,7 @@ class ReereeApp(App):
             self._next_daemon_id += 1
             step.status = "active"
             step.daemon_id = daemon_id
-            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": ""}
+            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": "", "scope": self.project_dir.name}
             editor.update_step_status(idx, "active")
             self._exec_write(f"[cyan]▶ Daemon {daemon_id}:[/cyan] Step {idx+1} — {step.description}")
             self._run_daemon(daemon_id, step, idx)
@@ -1005,7 +1004,7 @@ class ReereeApp(App):
             self._next_daemon_id += 1
             step.status = "active"
             step.daemon_id = daemon_id
-            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": ""}
+            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": "", "scope": self.project_dir.name}
             editor.update_step_status(idx, "active")
             self._exec_write(f"[cyan]▶ Daemon {daemon_id}:[/cyan] Step {idx+1} — {step.description}")
             self._run_daemon(daemon_id, step, idx)
@@ -1028,7 +1027,7 @@ class ReereeApp(App):
             self._next_daemon_id += 1
             step.status = "active"
             step.daemon_id = daemon_id
-            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": ""}
+            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": "", "scope": self.project_dir.name}
             editor.update_step_status(idx, "active")
             self._update_status()
             self._exec_write(f"[cyan]▶ Daemon {daemon_id}:[/cyan] Step {idx+1} — {step.description}")
@@ -1081,6 +1080,11 @@ class ReereeApp(App):
     def _daemon_log(self, daemon_id: int, message: str) -> None:
         if daemon_id in self._daemons:
             self._daemons[daemon_id]["log"] += message + "\n"
+            # Show scope tag if daemon is from a different scope than current
+            scope = self._daemons[daemon_id].get("scope", "")
+            if scope and scope != self.project_dir.name:
+                self._exec_write(f"  [dim][d{daemon_id}:{scope}][/dim] {message}")
+                return
         # Stream daemon output to exec log
         self._exec_write(f"  [dim][d{daemon_id}][/dim] {message}")
 
