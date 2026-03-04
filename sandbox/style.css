@@ -1,0 +1,81 @@
+/* Link Dashboard — minimal styling. Needs work. */
+
+body {
+    font-family: monospace;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    margin: 0;
+    padding: 20px;
+}
+
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+h1 { color: #00d4aa; }
+h2 { color: #888; font-size: 14px; }
+.subtitle { color: #666; }
+
+/* TODO: form styling is terrible */
+.add-form input {
+    background: #16213e;
+    border: 1px solid #333;
+    color: #e0e0e0;
+    padding: 6px 10px;
+    margin-right: 8px;
+}
+
+.add-form button {
+    background: #00d4aa;
+    color: #1a1a2e;
+    border: none;
+    padding: 6px 16px;
+    cursor: pointer;
+}
+
+/* TODO: search bar needs styling */
+.search {
+    margin: 16px 0;
+}
+.search input {
+    width: 100%;
+    background: #16213e;
+    border: 1px solid #333;
+    color: #e0e0e0;
+    padding: 8px 12px;
+    box-sizing: border-box;
+}
+
+/* TODO: table needs better styling, hover states, responsive */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+}
+th {
+    text-align: left;
+    padding: 8px;
+    border-bottom: 1px solid #333;
+    color: #888;
+}
+td {
+    padding: 8px;
+    border-bottom: 1px solid #222;
+}
+td a { color: #4fc3f7; }
+
+.btn-delete {
+    background: none;
+    border: 1px solid #c0392b;
+    color: #c0392b;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.error {
+    color: #e74c3c;
+    margin-top: 8px;
+    font-size: 13px;
+}

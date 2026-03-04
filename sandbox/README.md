@@ -1,23 +1,34 @@
-# Link Scraper
+# Link Dashboard
 
-A web crawling tool that extracts and filters links from web pages.
+A small web app for saving and organizing links. Has a web interface with obvious gaps.
 
-## Usage
+## Run
 ```bash
-python cli.py https://example.com -o links.json -n 20 -d example.com
+python app.py
+# → http://localhost:8080
 ```
 
-## Known Issues
-- No visited URL tracking (infinite loops possible)
-- No timeout on HTTP requests
-- No robots.txt support
-- Config env vars not type-converted
-- Relative URLs not normalized
-- Tests incomplete
+## What works
+- Dashboard renders with saved links
+- Links stored in links.json
+- Basic CSS dark theme
+
+## What's broken / incomplete
+- Add link form submits but API returns 501
+- Delete button calls API but returns 501
+- Search box is just a text input that does nothing
+- No tag filtering or management
+- No input validation
+- No error handling on API routes
+- Tests only cover load/save, not HTTP handlers
+- CSS needs work (hover states, responsive, form layout)
 
 ## Files
-- `scraper.py` — core crawling and parsing logic
-- `utils.py` — retry, rate limiting, URL normalization utilities
-- `config.py` — configuration management (file + env vars)
-- `cli.py` — command-line interface
-- `tests/` — test suite (incomplete)
+- `app.py` — HTTP server + dashboard handler
+- `style.css` — minimal dark theme
+- `links.json` — data store
+- `tests/test_app.py` — incomplete test suite
+- `scraper.py` — link scraper (legacy, not wired to dashboard)
+- `config.py` — config management
+- `utils.py` — utility functions
+- `cli.py` — CLI for scraper

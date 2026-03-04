@@ -1,0 +1,17 @@
+[
+  {
+    "url": "https://textual.textualize.io/",
+    "title": "Textual — TUI framework",
+    "tags": ["python", "tui"]
+  },
+  {
+    "url": "https://together.ai/",
+    "title": "Together AI — inference API",
+    "tags": ["llm", "api"]
+  },
+  {
+    "url": "https://docs.python.org/3/library/http.server.html",
+    "title": "Python http.server docs",
+    "tags": ["python", "docs"]
+  }
+]

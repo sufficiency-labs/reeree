@@ -41,6 +41,19 @@ class Step:
         return markers.get(self.status, "[ ]")
 
     @property
+    def rich_indicator(self) -> str:
+        """Unicode status indicator for rich display."""
+        indicators = {
+            "done": "✓",
+            "active": "▶",
+            "skipped": "–",
+            "failed": "✗",
+            "blocked": "◌",
+            "decision": "?",
+        }
+        return indicators.get(self.status, "○")
+
+    @property
     def done_criteria(self) -> str | None:
         """Extract acceptance criteria from annotations."""
         for a in self.annotations:
@@ -102,6 +115,130 @@ class Plan:
 
         lines.append("")
         return "\n".join(lines)
+
+    def to_rich_display(self) -> str:
+        """Render plan as rich-formatted display text for NORMAL mode.
+
+        Uses Unicode indicators and cleaner formatting than raw markdown.
+        Still parseable back to Plan via from_markdown (includes markers in comments).
+        """
+        lines = [f"  {self.intent}", ""]
+        for i, step in enumerate(self.steps, 1):
+            indicator = step.rich_indicator
+            # Color hints via the indicator character
+            desc = step.description
+
+            # Build the display line
+            suffix_parts = []
+            if step.commit_hash:
+                suffix_parts.append(f"[{step.commit_hash[:7]}]")
+            if step.daemon_id is not None and step.status == "active":
+                suffix_parts.append(f"daemon {step.daemon_id}")
+            if step.error:
+                suffix_parts.append(f"ERR: {step.error}")
+            suffix = f"  {' '.join(suffix_parts)}" if suffix_parts else ""
+
+            lines.append(f"  {indicator}  {i}. {desc}{suffix}")
+
+            # Annotations as indented context
+            for annotation in step.annotations:
+                lines.append(f"        {annotation}")
+
+            # Show files if specified and not in annotations
+            if step.files and not step.file_hints:
+                lines.append(f"        files: {', '.join(step.files)}")
+
+        lines.append("")
+        return "\n".join(lines)
+
+    @classmethod
+    def from_rich_display(cls, text: str) -> "Plan":
+        """Parse plan from rich display format.
+
+        Handles:
+          intent line (first non-empty)
+          ✓  1. description  [abc1234]
+          ▶  2. description  daemon 1
+          ○  3. description
+                annotation line
+        """
+        import re
+        lines = text.strip().split("\n")
+        intent = ""
+        steps = []
+        current_step = None
+
+        indicator_map = {"✓": "done", "▶": "active", "–": "skipped",
+                         "✗": "failed", "◌": "blocked", "?": "decision", "○": "pending"}
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Intent: first non-empty line that isn't a step
+            if not intent and stripped and not any(stripped.startswith(ind) for ind in indicator_map):
+                intent = stripped.replace("# Plan:", "").strip()
+                continue
+
+            # Step line: indicator + number + description
+            step_match = re.match(r'\s*([✓▶–✗◌?○])\s+(\d+)\.\s+(.+)', line)
+            if step_match:
+                if current_step:
+                    steps.append(current_step)
+
+                ind_char, _num, desc = step_match.groups()
+                status = indicator_map.get(ind_char, "pending")
+
+                # Extract commit hash
+                commit = None
+                commit_match = re.search(r'\[([a-f0-9]{7})\]', desc)
+                if commit_match:
+                    commit = commit_match.group(1)
+                    desc = desc[:commit_match.start()].strip()
+
+                # Extract daemon id
+                daemon_id = None
+                daemon_match = re.search(r'daemon (\d+)', desc)
+                if daemon_match:
+                    daemon_id = int(daemon_match.group(1))
+                    desc = desc[:daemon_match.start()].strip()
+
+                # Extract error
+                error = None
+                err_match = re.search(r'ERR: (.+)$', desc)
+                if err_match:
+                    error = err_match.group(1)
+                    desc = desc[:err_match.start()].strip()
+
+                current_step = Step(
+                    description=desc,
+                    status=status,
+                    commit_hash=commit,
+                    daemon_id=daemon_id,
+                    error=error,
+                )
+                continue
+
+            # Annotation lines (indented under a step)
+            ann_match = re.match(r'\s{6,}(.+)', line)
+            if ann_match and current_step:
+                annotation = ann_match.group(1).strip()
+                if annotation.lower().startswith("files:"):
+                    current_step.files = [f.strip() for f in annotation[6:].split(",")]
+                current_step.annotations.append(annotation)
+                continue
+
+            # Also handle > annotation format (from markdown)
+            gt_match = re.match(r'\s+> (.+)', line)
+            if gt_match and current_step:
+                annotation = gt_match.group(1)
+                if annotation.lower().startswith("files:"):
+                    current_step.files = [f.strip() for f in annotation[6:].split(",")]
+                current_step.annotations.append(annotation)
+
+        if current_step:
+            steps.append(current_step)
+
+        return cls(intent=intent, steps=steps)
 
     @classmethod
     def from_markdown(cls, text: str) -> "Plan":

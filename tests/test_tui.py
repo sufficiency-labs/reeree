@@ -735,23 +735,23 @@ class TestPlanEditor:
 
     @pytest.mark.asyncio
     async def test_done_steps_show_checkmark(self, tmp_path):
-        """Done steps display [x] marker."""
+        """Done steps display ✓ indicator in NORMAL (rich display) mode."""
         plan = _make_plan()
         app = _make_app(tmp_path, plan)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
             text = editor.text
-            assert "[x]" in text
+            assert "\u2713" in text  # ✓
 
     @pytest.mark.asyncio
     async def test_pending_steps_show_empty_checkbox(self, tmp_path):
-        """Pending steps display [ ] marker."""
+        """Pending steps display ○ indicator in NORMAL (rich display) mode."""
         plan = _make_plan()
         app = _make_app(tmp_path, plan)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
             text = editor.text
-            assert "[ ]" in text
+            assert "\u25cb" in text  # ○
 
     @pytest.mark.asyncio
     async def test_get_plan_roundtrips(self, tmp_path):
@@ -766,7 +766,7 @@ class TestPlanEditor:
 
     @pytest.mark.asyncio
     async def test_update_step_status(self, tmp_path):
-        """update_step_status changes the checkbox in the editor."""
+        """update_step_status changes the indicator in the editor."""
         plan = _make_plan()
         app = _make_app(tmp_path, plan)
         async with app.run_test() as pilot:
@@ -774,8 +774,8 @@ class TestPlanEditor:
             # Mark step 0 as done
             editor.update_step_status(0, "done", "def5678")
             text = editor.text
-            # Should now have two [x] steps
-            assert text.count("[x]") == 2
+            # Should now have two ✓ steps (rich display mode)
+            assert text.count("\u2713") == 2
 
     @pytest.mark.asyncio
     async def test_update_step_status_preserves_cursor(self, tmp_path):
@@ -794,7 +794,7 @@ class TestPlanEditor:
 
     @pytest.mark.asyncio
     async def test_step_with_annotations(self, tmp_path):
-        """Annotations render as > indented lines."""
+        """Annotations render as indented lines in rich display."""
         plan = Plan(intent="test", steps=[
             Step(
                 description="Add retries",
@@ -806,8 +806,8 @@ class TestPlanEditor:
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
             text = editor.text
-            assert "> max 3 retries" in text
-            assert "> exponential backoff" in text
+            assert "max 3 retries" in text
+            assert "exponential backoff" in text
 
 
 # =============================================================================

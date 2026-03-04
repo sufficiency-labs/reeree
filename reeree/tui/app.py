@@ -65,11 +65,17 @@ class PlanEditor(TextArea):
     def load_plan(self, plan: Plan) -> None:
         was_readonly = self.read_only
         self.read_only = False
-        self.text = plan.to_markdown()
+        if self.vim_mode == "INSERT":
+            self.text = plan.to_markdown()
+        else:
+            self.text = plan.to_rich_display()
         self.read_only = was_readonly
 
     def get_plan(self) -> Plan:
-        return Plan.from_markdown(self.text)
+        if self.vim_mode == "INSERT":
+            return Plan.from_markdown(self.text)
+        else:
+            return Plan.from_rich_display(self.text)
 
     def update_step_status(self, step_index: int, status: str, commit_hash: str | None = None) -> None:
         plan = self.get_plan()
@@ -78,26 +84,63 @@ class PlanEditor(TextArea):
             if commit_hash:
                 plan.steps[step_index].commit_hash = commit_hash
             cursor = self.cursor_location
-            was_readonly = self.read_only
-            self.read_only = False
-            self.text = plan.to_markdown()
-            self.read_only = was_readonly
+            self.load_plan(plan)
             try:
                 self.cursor_location = cursor
             except Exception:
                 pass
 
+    def cursor_step_index(self) -> int | None:
+        """Get the plan step index at the current cursor line, or None."""
+        plan = self.get_plan()
+        if not plan.steps:
+            return None
+        # In rich display mode, step lines are "  indicator  N. desc"
+        # In markdown mode, step lines are "- [.] Step N: desc"
+        row, _col = self.cursor_location
+        text = self.text
+        lines = text.split("\n")
+        if row >= len(lines):
+            return None
+        # Count step lines up to and including the cursor line
+        import re
+        step_idx = -1
+        for i, line in enumerate(lines):
+            if i > row:
+                break
+            # Rich display: starts with indicator
+            if re.match(r'\s*[✓▶–✗◌?○]\s+\d+\.', line):
+                step_idx += 1
+            # Markdown: starts with - [
+            elif re.match(r'- \[.\] Step \d+:', line):
+                step_idx += 1
+        return step_idx if step_idx >= 0 else None
+
     def _enter_insert_mode(self) -> None:
-        self.read_only = False
-        self.vim_mode = "INSERT"
+        # Swap to raw markdown for editing
+        try:
+            plan = self.get_plan()  # parse from rich display
+            self.read_only = False
+            self.vim_mode = "INSERT"
+            self.text = plan.to_markdown()  # now in markdown
+        except Exception:
+            self.read_only = False
+            self.vim_mode = "INSERT"
         app = self.app
         if isinstance(app, ReereeApp):
             app.query_one("#status-bar", StatusBar).mode = "INSERT"
             app._flog.debug("Mode: INSERT")
 
     def _enter_normal_mode(self) -> None:
-        self.read_only = True
-        self.vim_mode = "NORMAL"
+        # Parse markdown edits, swap back to rich display
+        try:
+            plan = Plan.from_markdown(self.text)  # parse markdown edits
+            self.read_only = True
+            self.vim_mode = "NORMAL"
+            self.text = plan.to_rich_display()  # rich display
+        except Exception:
+            self.read_only = True
+            self.vim_mode = "NORMAL"
         app = self.app
         if isinstance(app, ReereeApp):
             app.query_one("#status-bar", StatusBar).mode = "NORMAL"
@@ -195,10 +238,10 @@ class ReereeApp(App):
         height: 1fr;
     }
     #plan-editor {
-        width: 55%;
+        width: 40%;
     }
     #right-panel {
-        width: 45%;
+        width: 60%;
     }
     #exec-log {
         height: 1fr;
@@ -331,8 +374,24 @@ class ReereeApp(App):
             self._flog.info("Force quit.")
             self.exit()
         elif command == "w":
+            # :w — the plan dispatch verb
+            # :w              dispatch up to cursor step
+            # :w 3            dispatch step 3
+            # :w 1 3 5        dispatch specific steps
+            # :w "do X"       spawn new step + dispatch it
+            # :w 3 "focus on edge cases"  attach instruction to step 3 + dispatch
             self._save_plan()
-            self.notify("Plan saved")
+            await self._dispatch_write(args)
+        elif command == "W":
+            # :W — dispatch all pending (or specific steps)
+            # :W              dispatch ALL pending steps
+            # :W 1 3 5        dispatch specific steps
+            # :W "do X"       spawn new step + dispatch
+            self._save_plan()
+            if not args.strip():
+                await self._dispatch_all()
+            else:
+                await self._dispatch_write(args)
         elif command == "wq":
             self._save_plan()
             self.exit()
@@ -383,7 +442,9 @@ class ReereeApp(App):
             "  Tab/^W   Cycle pane focus\n"
             "\n"
             "[bold]COMMANDS[/bold]\n"
-            "  :go              Dispatch pending steps\n"
+            "  :w               Execute plan up to cursor step\n"
+            "  :W               Execute ALL pending steps\n"
+            "  :go              Dispatch next 2 pending steps\n"
             "  :add \"desc\"      Add a step\n"
             "  :del N           Delete step N\n"
             "  :move N M        Move step N to M\n"
@@ -395,7 +456,7 @@ class ReereeApp(App):
             "  :chat            Toggle chat (executor daemon)\n"
             "  :chat coherence  Chat with coherence daemon\n"
             "  :chat state      Chat with state daemon\n"
-            "  :w / :q / :wq    Save / quit / both\n"
+            "  :q / :q! / :wq   Quit (save) / force quit / save+quit\n"
             "  :help            This help\n"
         )
 
@@ -671,7 +732,157 @@ class ReereeApp(App):
         else:
             self.notify(f"Unknown option: {key}", severity="error")
 
+    async def _dispatch_write(self, args: str) -> None:
+        """Parse :w args and dispatch accordingly.
+
+        Grammar:
+          :w                      → dispatch up to cursor
+          :w 3                    → dispatch step 3
+          :w 1 3 5                → dispatch steps 1, 3, 5
+          :w "add error handling" → create step + dispatch
+          :w 3 "focus on edges"   → attach annotation to step 3 + dispatch
+        """
+        import re
+        args = args.strip()
+
+        if not args:
+            # No args: dispatch up to cursor
+            editor = self.query_one("#plan-editor", PlanEditor)
+            cursor_step = editor.cursor_step_index()
+            if cursor_step is not None:
+                await self._dispatch_up_to(cursor_step)
+            else:
+                self.notify("Plan saved")
+            return
+
+        # Extract quoted string (instruction/description)
+        quoted_match = re.search(r'"([^"]+)"', args)
+        instruction = quoted_match.group(1) if quoted_match else None
+        # Extract numbers
+        nums_part = re.sub(r'"[^"]*"', '', args).strip()
+        step_nums = [int(x) - 1 for x in nums_part.split() if x.isdigit()]
+
+        if instruction and not step_nums:
+            # :w "description" — create new step and dispatch
+            from ..plan import Step
+            new_step = Step(description=instruction)
+            self.plan.steps.append(new_step)
+            new_idx = len(self.plan.steps) - 1
+            editor = self.query_one("#plan-editor", PlanEditor)
+            editor.load_plan(self.plan)
+            self._save_plan()
+            self._exec_write(f"[green]+[/green] Added: {instruction}")
+            await self._dispatch_steps([new_idx])
+        elif instruction and step_nums:
+            # :w N "instruction" — attach instruction to step N, dispatch
+            for idx in step_nums:
+                if 0 <= idx < len(self.plan.steps):
+                    self.plan.steps[idx].annotations.append(instruction)
+                    self._exec_write(f"[dim]Attached to step {idx+1}: {instruction}[/dim]")
+            editor = self.query_one("#plan-editor", PlanEditor)
+            editor.load_plan(self.plan)
+            self._save_plan()
+            await self._dispatch_steps(step_nums)
+        elif step_nums:
+            # :w 1 3 5 — dispatch specific steps
+            await self._dispatch_steps(step_nums)
+        else:
+            self.notify("Plan saved")
+
+    async def _dispatch_steps(self, step_indices: list[int]) -> None:
+        """Dispatch specific steps by index.
+
+        :w 1 3 5 or :W 2 4 — dispatch exactly those steps.
+        Can also pass daemon spawning instructions as step descriptions
+        that get added as new steps and dispatched immediately.
+        """
+        editor = self.query_one("#plan-editor", PlanEditor)
+        self.plan = editor.get_plan()
+
+        dispatched = 0
+        for idx in step_indices:
+            if not (0 <= idx < len(self.plan.steps)):
+                self._exec_write(f"[yellow]Step {idx + 1} out of range[/yellow]")
+                continue
+            step = self.plan.steps[idx]
+            if step.status != "pending":
+                self._exec_write(f"[dim]Step {idx + 1} already {step.status}[/dim]")
+                continue
+
+            daemon_id = self._next_daemon_id
+            self._next_daemon_id += 1
+            step.status = "active"
+            step.daemon_id = daemon_id
+            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": ""}
+            editor.update_step_status(idx, "active")
+            self._exec_write(f"[cyan]▶ Daemon {daemon_id}:[/cyan] Step {idx+1} — {step.description}")
+            self._run_daemon(daemon_id, step, idx)
+            dispatched += 1
+
+        if dispatched:
+            self._exec_write(f"[bold]Dispatched {dispatched} step(s)[/bold]")
+        self._update_status()
+
+    async def _dispatch_up_to(self, target_step: int) -> None:
+        """Dispatch all pending steps up to and including target_step.
+
+        :w in plan context — "execute up to where my cursor is."
+        """
+        editor = self.query_one("#plan-editor", PlanEditor)
+        self.plan = editor.get_plan()
+
+        dispatched = 0
+        for idx, step in enumerate(self.plan.steps):
+            if idx > target_step:
+                break
+            if step.status != "pending":
+                continue
+
+            daemon_id = self._next_daemon_id
+            self._next_daemon_id += 1
+            step.status = "active"
+            step.daemon_id = daemon_id
+            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": ""}
+            editor.update_step_status(idx, "active")
+            self._exec_write(f"[cyan]▶ Daemon {daemon_id}:[/cyan] Step {idx+1} — {step.description}")
+            self._run_daemon(daemon_id, step, idx)
+            dispatched += 1
+
+        if dispatched:
+            self._exec_write(f"[bold]Dispatched {dispatched} step(s) up to step {target_step + 1}[/bold]")
+        else:
+            self._exec_write("[dim]No pending steps up to cursor[/dim]")
+        self._update_status()
+
+    async def _dispatch_all(self) -> None:
+        """Dispatch ALL pending steps — :W means 'run everything you can.'
+
+        Daemons execute in parallel. Decision/blocked steps are skipped.
+        """
+        editor = self.query_one("#plan-editor", PlanEditor)
+        self.plan = editor.get_plan()
+
+        pending = [(i, s) for i, s in enumerate(self.plan.steps)
+                   if s.status == "pending"]
+        if not pending:
+            self._exec_write("[dim]No pending steps to dispatch[/dim]")
+            return
+
+        self._exec_write(f"[bold]Dispatching all {len(pending)} pending step(s)...[/bold]")
+        for idx, step in pending:
+            daemon_id = self._next_daemon_id
+            self._next_daemon_id += 1
+            step.status = "active"
+            step.daemon_id = daemon_id
+            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": ""}
+            editor.update_step_status(idx, "active")
+            self._exec_write(f"[cyan]▶ Daemon {daemon_id}:[/cyan] Step {idx+1} — {step.description}")
+            self._run_daemon(daemon_id, step, idx)
+
+        self._update_status()
+
     async def _dispatch_daemons(self) -> None:
+        """Original :go — dispatch next 2 pending steps."""
         editor = self.query_one("#plan-editor", PlanEditor)
         self.plan = editor.get_plan()
 
