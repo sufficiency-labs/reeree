@@ -25,12 +25,20 @@ class PlanEditor(TextArea):
     ]
 
     def __init__(self, plan: Plan | None = None, **kwargs):
-        super().__init__(
-            language="markdown",
-            theme="monokai",
-            show_line_numbers=True,
-            **kwargs,
-        )
+        # Try markdown highlighting, fall back to plain text
+        try:
+            super().__init__(
+                language="markdown",
+                theme="monokai",
+                show_line_numbers=True,
+                **kwargs,
+            )
+        except Exception:
+            super().__init__(
+                theme="monokai",
+                show_line_numbers=True,
+                **kwargs,
+            )
         if plan:
             self.load_plan(plan)
 
@@ -399,7 +407,6 @@ class ReereeApp(App):
 
     async def _dispatch_daemons(self) -> None:
         """Dispatch daemons for pending steps."""
-        from ..daemon_executor import dispatch_step
         editor = self.query_one("#plan-editor", PlanEditor)
         self.plan = editor.get_plan()
 
@@ -416,20 +423,53 @@ class ReereeApp(App):
             self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": ""}
             editor.update_step_status(idx, "active")
             self._update_status()
-            self.notify(f"Daemon {daemon_id} dispatched: {step.description[:50]}")
+            self.notify(f"Daemon {daemon_id}: {step.description[:50]}")
 
-            # Run daemon as async task
-            self.run_worker(  # Textual API method name
-                dispatch_step(
-                    step=step,
-                    step_index=idx,
-                    project_dir=self.project_dir,
-                    config=self.config,
-                    on_log=lambda msg, wid=daemon_id: self._daemon_log(wid, msg),
-                ),
-                name=f"daemon-{daemon_id}",
-                exit_on_error=False,
+            # Launch daemon as background async task
+            self._run_daemon(daemon_id, step, idx)
+
+    async def _run_daemon_task(self, daemon_id: int, step, step_index: int) -> None:
+        """Execute a daemon and update status when done."""
+        from ..daemon_executor import dispatch_step
+        try:
+            result = await dispatch_step(
+                step=step,
+                step_index=step_index,
+                project_dir=self.project_dir,
+                config=self.config,
+                on_log=lambda msg, did=daemon_id: self._daemon_log(did, msg),
             )
+            # Update step status based on result
+            editor = self.query_one("#plan-editor", PlanEditor)
+            status = result.get("status", "failed")
+            commit_hash = result.get("commit_hash")
+
+            if status == "done":
+                editor.update_step_status(step_index, "done", commit_hash)
+                self.plan.steps[step_index].status = "done"
+                self.plan.steps[step_index].commit_hash = commit_hash
+                self._save_plan()
+                self.notify(f"Daemon {daemon_id} done: {result.get('summary', '')[:50]}")
+            else:
+                editor.update_step_status(step_index, "failed")
+                self.plan.steps[step_index].status = "failed"
+                self.plan.steps[step_index].error = result.get("error", "unknown")
+                self._save_plan()
+                self.notify(f"Daemon {daemon_id} failed: {result.get('error', '')[:50]}", severity="error")
+
+            self._daemons[daemon_id]["status"] = status
+            self._update_status()
+
+        except Exception as e:
+            self._daemon_log(daemon_id, f"EXCEPTION: {e}")
+            self._daemons[daemon_id]["status"] = "failed"
+            self.notify(f"Daemon {daemon_id} error: {e}", severity="error")
+            self._update_status()
+
+    def _run_daemon(self, daemon_id: int, step, step_index: int) -> None:
+        """Launch a daemon task."""
+        import asyncio
+        asyncio.ensure_future(self._run_daemon_task(daemon_id, step, step_index))
 
     def _daemon_log(self, daemon_id: int, message: str) -> None:
         """Append to a daemon's log."""

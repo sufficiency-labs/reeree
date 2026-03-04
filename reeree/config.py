@@ -3,6 +3,18 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 import json
+import os
+
+
+def _load_api_key() -> str:
+    """Load API key: env var > ~/.config/together/api_key > empty."""
+    key = os.environ.get("TOGETHER_API_KEY", "")
+    if key:
+        return key
+    key_file = Path.home() / ".config" / "together" / "api_key"
+    if key_file.exists():
+        return key_file.read_text().strip()
+    return ""
 
 
 @dataclass
@@ -10,9 +22,9 @@ class Config:
     """Runtime configuration."""
 
     # LLM settings
-    api_base: str = "http://localhost:11434/v1"  # ollama default
-    model: str = "deepseek-coder-v2:latest"
-    api_key: str = "ollama"  # ollama doesn't need a real key
+    api_base: str = "https://api.together.xyz/v1"
+    model: str = "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
+    api_key: str = ""
 
     # Autonomy level: low = approve everything, medium = auto-approve reads,
     # high = auto-approve reads+writes, full = auto-approve all
@@ -24,6 +36,10 @@ class Config:
 
     # Context settings
     max_context_tokens: int = 24000  # leave room in 32K window
+
+    def __post_init__(self):
+        if not self.api_key:
+            self.api_key = _load_api_key()
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":

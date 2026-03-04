@@ -47,6 +47,11 @@ Power users already have the right workflow: tmux for persistence, vim for editi
 **In practice:** No language in the UI, docs, or code that implies agency, personality, or cognition. The orchestrator doesn't "recommend" a model — it routes to the best-fit executor based on task classification. No "I" anywhere. No opinions. No conversational framing.
 **Rules out:** "I'd suggest...", "I think...", "I noticed...", helper personas, chatbot personality, any implication that the tool has preferences or experiences.
 
+### 8. Look Before You Ask
+**Principle:** Exhaust existing context before requesting new input from the user.
+**In practice:** Daemons search project files, config, history, linked documents, and prior outputs before surfacing a question. If the answer exists anywhere in the user's system, the daemon finds it — not bothers the user for it. Every question that reaches the user should be genuinely novel, not something a grep could have answered.
+**Rules out:** Lazy escalation, defaulting to "ask the user," prompting for information already in the codebase, re-asking for things documented elsewhere.
+
 ## Red Lines
 
 What we will **never** build, regardless of convenience or demand:

@@ -1,7 +1,31 @@
 """Context management — load only what's needed for the current step."""
 
+import subprocess
 from pathlib import Path
 from .plan import Step
+
+
+def _find_parent_contexts(project_dir: Path) -> list[tuple[str, str]]:
+    """Walk up from project_dir to find parent repo CLAUDE.md files.
+
+    Enables subrepo telescoping: working in private/kingfall still gets
+    vorkosigan-level context. Stops at filesystem root or after 5 levels.
+    """
+    results = []
+    current = project_dir.resolve().parent
+    levels = 0
+
+    while current != current.parent and levels < 5:
+        # Check if this directory is a git repo root
+        if (current / ".git").exists() or (current / ".git").is_file():
+            claude_md = current / "CLAUDE.md"
+            if claude_md.exists():
+                label = f"parent:{current.name}/CLAUDE.md"
+                results.append((label, claude_md.read_text()))
+        current = current.parent
+        levels += 1
+
+    return results
 
 
 def gather_context(step: Step, project_dir: Path, max_chars: int = 80000) -> str:
@@ -13,7 +37,15 @@ def gather_context(step: Step, project_dir: Path, max_chars: int = 80000) -> str
     parts = []
     total = 0
 
-    # Always include project-level context if it exists
+    # Walk up to find parent repo context (subrepo telescoping)
+    # If we're in private/kingfall, also grab vorkosigan-level CLAUDE.md
+    parent_contexts = _find_parent_contexts(project_dir)
+    for label, content in parent_contexts:
+        if total + len(content) < max_chars:
+            parts.append(f"=== {label} ===\n{content}")
+            total += len(content)
+
+    # Project-level context
     for ctx_file in ["CLAUDE.md", "README.md", ".reeree/config.json"]:
         p = project_dir / ctx_file
         if p.exists():
