@@ -51,12 +51,16 @@ def main(ctx, intent, model, api_base, api_key, autonomy, project):
         try:
             plan = create_plan(intent_str, project_dir, config)
             plan.save(plan_path)
-            click.echo(f"Plan created with {len(plan.steps)} steps")
+            click.echo(f"Plan: {plan_path} ({len(plan.steps)} steps)")
         except Exception as e:
             click.echo(f"Failed to create plan: {e}", err=True)
             sys.exit(1)
     elif plan_path.exists():
         plan = Plan.load(plan_path)
+        done, total = plan.progress
+        click.echo(f"Resuming: {plan_path} ({done}/{total} done)")
+    else:
+        click.echo(f"No plan. Edit {plan_path} or pass an intent.")
 
     if plan is None:
         plan = Plan(intent="", steps=[])

@@ -329,6 +329,8 @@ class ReereeApp(App):
         """Focus the plan editor on start."""
         self.query_one("#plan-editor", PlanEditor).focus()
         self._update_status()
+        plan_path = self.project_dir / ".reeree" / "plan.md"
+        self.notify(f"Plan: {plan_path}  |  :go to dispatch  |  :help for commands")
 
     def _update_status(self) -> None:
         """Update the status bar."""
@@ -399,8 +401,11 @@ class ReereeApp(App):
         args = parts[1] if len(parts) > 1 else ""
 
         if command in ("q", "quit"):
+            self._save_plan()
+            self._log.info(f"Quit. Plan saved to {self.project_dir / '.reeree' / 'plan.md'}")
             self.exit()
         elif command in ("q!", "quit!"):
+            self._log.info("Force quit — plan NOT saved")
             self.exit()
         elif command == "w":
             self._save_plan()
