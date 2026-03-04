@@ -240,16 +240,17 @@ class FileViewer(TextArea):
 
     vim_mode = reactive("NORMAL")
 
+    LANG_MAP = {
+        ".py": "python", ".js": "javascript", ".ts": "javascript",
+        ".md": "markdown", ".yml": "yaml", ".yaml": "yaml",
+        ".json": "json", ".toml": "toml", ".sh": "bash",
+        ".css": "css", ".html": "html", ".rs": "rust", ".go": "go",
+    }
+
     def __init__(self, file_path: Path, **kwargs):
         self._file_path = file_path
-        # Detect language from extension
-        lang_map = {
-            ".py": "python", ".js": "javascript", ".ts": "javascript",
-            ".md": "markdown", ".yml": "yaml", ".yaml": "yaml",
-            ".json": "json", ".toml": "toml", ".sh": "bash",
-            ".css": "css", ".html": "html", ".rs": "rust", ".go": "go",
-        }
-        lang = lang_map.get(file_path.suffix, None)
+        self._pending_content: str | None = None
+        lang = self.LANG_MAP.get(file_path.suffix, None)
         try:
             super().__init__(
                 language=lang,
@@ -265,8 +266,15 @@ class FileViewer(TextArea):
                 read_only=True,
                 **kwargs,
             )
-        if file_path.exists():
-            self.load_file(file_path.read_text())
+        # Read file content but defer loading until mounted
+        if file_path.exists() and file_path != Path("/dev/null"):
+            self._pending_content = file_path.read_text()
+
+    def on_mount(self) -> None:
+        """Load file content after widget is mounted in the DOM."""
+        if self._pending_content is not None:
+            self.load_file(self._pending_content)
+            self._pending_content = None
 
     @property
     def file_path(self) -> Path:
@@ -1103,9 +1111,11 @@ class ReereeApp(App):
                     daemon_history += f"\n--- Daemon {daemon.id} ---\n{daemon.log[-500:]}\n"
 
             system = (
-                f"Executor daemon. You execute actions on the user's machine.\n"
-                f"Voice: ship's computer — direct, informational, no hedging. Report what was done\n"
-                f"and what happened. No 'I think', 'I'll try', 'Let me'. Just act.\n\n"
+                f"Executor daemon. You execute actions AND respond conversationally.\n"
+                f"Voice: ship's computer — direct, informational, no hedging.\n"
+                f"ALWAYS include natural language alongside action blocks. The user reads your\n"
+                f"text responses — empty responses with only action blocks are bad UX.\n"
+                f"Describe what you're doing, what you found, what happened. Be concise but present.\n\n"
                 f"## CRITICAL: Plan-First Workflow\n\n"
                 f"Your FIRST action on any new task MUST be to update the plan. The plan is the shared "
                 f"work queue between you and the user. Before executing anything:\n"
@@ -1164,13 +1174,15 @@ class ReereeApp(App):
                 f"This is a MULTI-TURN loop — up to 5 rounds of action→result→action.\n"
                 f"ALWAYS read files before editing them. ALWAYS check git status before committing.\n\n"
                 f"## Rules\n"
-                f"- PLAN FIRST. Always emit a ```yaml plan block before doing work.\n"
-                f"- Be concise. Do the thing, don't describe doing it.\n"
-                f"- If asked to run something, include a ```shell block. Don't say 'you can run...'.\n"
-                f"- If asked to edit code, read the file first, then ```edit or ```write.\n"
-                f"- Update step statuses as you work (active when starting, done when finished, failed if broken).\n"
-                f"- Git commit after meaningful changes: ```shell\\ngit add -A && git commit -m 'msg'\\n```\n"
-                f"- When done, emit a final ```yaml plan with updated statuses, then say DONE.\n\n"
+                f"- RESPOND CONVERSATIONALLY. Every response MUST include text the user reads.\n"
+                f"  Action blocks are stripped from display — only your conversational text shows.\n"
+                f"  Describe what you found, what you changed, what's next.\n"
+                f"- Update the plan via ```yaml blocks (these are processed silently, not shown).\n"
+                f"- If asked to run something, include ```shell block. Describe the result in text.\n"
+                f"- If asked to edit code, read first, then ```edit or ```write. Summarize changes in text.\n"
+                f"- Update step statuses as you work (active → done/failed).\n"
+                f"- Git commit after meaningful changes.\n"
+                f"- When done, update plan statuses and say DONE.\n\n"
                 f"Project context:\n{context[:8000]}\n\n"
                 f"Current plan:\n{plan_md}\n\n"
             )
@@ -1251,7 +1263,6 @@ class ReereeApp(App):
         import glob as globmod
         from ..executor import run_shell, write_file, edit_file, check_autonomy, check_path_containment
 
-        display = response
         results = []
 
         # Find all fenced code blocks with language tags
@@ -1261,7 +1272,13 @@ class ReereeApp(App):
         ))
 
         if not blocks:
-            return display, results
+            return response.strip(), results
+
+        # Strip all action blocks from display — user sees only conversational text
+        display = response
+        for block in reversed(blocks):  # reverse to preserve indices
+            display = display[:block.start()] + display[block.end():]
+        display = display.strip()
 
         for block in blocks:
             tag = block.group(1)  # full tag like "shell", "write:foo.py", "read:bar.py"
@@ -1603,16 +1620,19 @@ class ReereeApp(App):
 
         self._file_viewer_path = full_path
 
-        # Replace the file viewer widget with a fresh one for this file
-        old_viewer = self.query_one("#file-viewer", FileViewer)
-        new_viewer = FileViewer(full_path, id="file-viewer")
-        new_viewer.add_class("visible")
-        old_viewer.replace(new_viewer)
+        # Load content into existing file viewer
+        viewer = self.query_one("#file-viewer", FileViewer)
+        viewer._file_path = full_path
+        content = full_path.read_text() if full_path.exists() else ""
+        viewer.load_file(content)
+        viewer.vim_mode = "NORMAL"
+        viewer.read_only = True
+        viewer.add_class("visible")
 
         # Hide plan editor, show file viewer
         self.query_one("#plan-editor").styles.display = "none"
-        self.query_one("#file-viewer").styles.display = "block"
-        self.query_one("#file-viewer").focus()
+        viewer.styles.display = "block"
+        viewer.focus()
 
         self._exec_write(f"opened {path} (:q close, i edit, :w save)")
         self._flog.info(f"File viewer: {full_path}")
@@ -2069,7 +2089,11 @@ class ReereeApp(App):
 
 
 class CommandScreen(ModalScreen[str]):
-    """Vim-style : command input — appears at the very bottom of the screen."""
+    """Vim-style : command input with history (up/down arrows)."""
+
+    # Class-level history shared across all instances (persists for session)
+    _history: list[str] = []
+    _max_history: int = 100
 
     DEFAULT_CSS = """
     CommandScreen {
@@ -2093,6 +2117,11 @@ class CommandScreen(ModalScreen[str]):
     }
     """
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._history_index = len(self._history)  # past the end = new command
+        self._draft = ""  # what the user was typing before browsing history
+
     def compose(self) -> ComposeResult:
         with Horizontal(id="cmd-container"):
             yield Static(":", id="cmd-prefix")
@@ -2103,8 +2132,36 @@ class CommandScreen(ModalScreen[str]):
 
     @on(Input.Submitted, "#cmd-input")
     def on_submit(self, event: Input.Submitted) -> None:
-        self.dismiss(event.value.strip())
+        cmd = event.value.strip()
+        if cmd and (not self._history or self._history[-1] != cmd):
+            self._history.append(cmd)
+            if len(self._history) > self._max_history:
+                self._history.pop(0)
+        self.dismiss(cmd)
 
     def on_key(self, event: events.Key) -> None:
         if event.key == "escape":
             self.dismiss("")
+        elif event.key == "up":
+            if self._history:
+                inp = self.query_one("#cmd-input", Input)
+                if self._history_index == len(self._history):
+                    self._draft = inp.value
+                if self._history_index > 0:
+                    self._history_index -= 1
+                    inp.value = self._history[self._history_index]
+                    inp.cursor_position = len(inp.value)
+            event.prevent_default()
+            event.stop()
+        elif event.key == "down":
+            if self._history:
+                inp = self.query_one("#cmd-input", Input)
+                if self._history_index < len(self._history):
+                    self._history_index += 1
+                    if self._history_index == len(self._history):
+                        inp.value = self._draft
+                    else:
+                        inp.value = self._history[self._history_index]
+                    inp.cursor_position = len(inp.value)
+            event.prevent_default()
+            event.stop()
