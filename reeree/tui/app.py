@@ -231,6 +231,119 @@ class StatusBar(Static):
         return f" [{color}]{self.mode}[/{color}]  |  daemons: {daemon_str}  |  progress: {progress_str}  |  [dim]i=edit  :=cmd  Tab=pane  :help[/dim]"
 
 
+class FileViewer(TextArea):
+    """File editor — overlays the plan editor for viewing/editing project files.
+
+    Vim-style: opens in NORMAL mode (read-only), i to edit, :w to save,
+    :q to close back to plan. :wq to save and close.
+    """
+
+    vim_mode = reactive("NORMAL")
+
+    def __init__(self, file_path: Path, **kwargs):
+        self._file_path = file_path
+        # Detect language from extension
+        lang_map = {
+            ".py": "python", ".js": "javascript", ".ts": "javascript",
+            ".md": "markdown", ".yml": "yaml", ".yaml": "yaml",
+            ".json": "json", ".toml": "toml", ".sh": "bash",
+            ".css": "css", ".html": "html", ".rs": "rust", ".go": "go",
+        }
+        lang = lang_map.get(file_path.suffix, None)
+        try:
+            super().__init__(
+                language=lang,
+                theme="monokai",
+                show_line_numbers=True,
+                read_only=True,
+                **kwargs,
+            )
+        except Exception:
+            super().__init__(
+                theme="monokai",
+                show_line_numbers=True,
+                read_only=True,
+                **kwargs,
+            )
+        if file_path.exists():
+            self.load_file(file_path.read_text())
+
+    @property
+    def file_path(self) -> Path:
+        return self._file_path
+
+    def load_file(self, content: str) -> None:
+        """Load content without recursion — bypasses our text property."""
+        was_readonly = self.read_only
+        self.read_only = False
+        super().load_text(content)
+        self.read_only = was_readonly
+
+    def on_key(self, event: events.Key) -> None:
+        if self.vim_mode == "NORMAL":
+            if event.key == "i":
+                self.read_only = False
+                self.vim_mode = "INSERT"
+                app = self.app
+                if isinstance(app, ReereeApp):
+                    app.query_one("#status-bar", StatusBar).mode = "INSERT"
+                event.prevent_default()
+                event.stop()
+            elif event.key == "colon":
+                app = self.app
+                if isinstance(app, ReereeApp):
+                    app.action_command_mode()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "j":
+                self.action_cursor_down()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "k":
+                self.action_cursor_up()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "h":
+                self.action_cursor_left()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "l":
+                self.action_cursor_right()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "g":
+                self.action_cursor_line_start()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "G":
+                self.action_cursor_line_end()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "tab":
+                app = self.app
+                if isinstance(app, ReereeApp):
+                    app._focus_next_pane()
+                event.prevent_default()
+                event.stop()
+        elif self.vim_mode == "INSERT":
+            if event.key == "escape":
+                self.read_only = True
+                self.vim_mode = "NORMAL"
+                app = self.app
+                if isinstance(app, ReereeApp):
+                    app.query_one("#status-bar", StatusBar).mode = "NORMAL"
+                event.prevent_default()
+                event.stop()
+
+    def save(self) -> bool:
+        """Write buffer to disk. Returns True on success."""
+        try:
+            self._file_path.write_text(self.text)
+            return True
+        except Exception:
+            return False
+
+
 class ReereeApp(App):
     """reeree — plan on the left, execution log on the right."""
 
@@ -242,6 +355,13 @@ class ReereeApp(App):
     }
     #plan-editor {
         width: 40%;
+    }
+    #file-viewer {
+        width: 40%;
+        display: none;
+    }
+    #file-viewer.visible {
+        display: block;
     }
     #right-panel {
         width: 60%;
@@ -298,11 +418,13 @@ class ReereeApp(App):
         # Daemons are NOT scoped — they're global to the session.
         # All daemon output goes to the shared exec log regardless of active scope.
         self._scope_stack: list[tuple] = []
+        self._file_viewer_path: Path | None = None  # Track open file
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="main-layout"):
             yield PlanEditor(self.plan, id="plan-editor")
+            yield FileViewer(Path("/dev/null"), id="file-viewer")
             with Vertical(id="right-panel"):
                 yield DaemonTreeView(self._daemon_registry, id="daemon-tree")
                 yield RichLog(id="exec-log", highlight=True, markup=True, wrap=True)
@@ -448,15 +570,9 @@ class ReereeApp(App):
         chat_input.focus()
 
         # Show probe results in exec log
-        self._exec_write("[bold]reeree setup[/bold] — tell me how you want this configured")
-        self._exec_write(f"[dim]Detected providers:[/dim]")
-        for line in probe_results:
-            self._exec_write(f"[dim]{line}[/dim]")
-        self._exec_write("")
-        self._exec_write("[dim]Just describe what you want in plain language.[/dim]")
-        self._exec_write("[dim]Examples: 'use ollama locally', 'together.ai with high autonomy',[/dim]")
-        self._exec_write("[dim]'ollama for fast tasks, together.ai for reasoning'[/dim]")
-        self._exec_write("")
+        providers = " | ".join(probe_results) if probe_results else "none detected"
+        self._exec_write(f"[bold]setup[/bold] detected: {providers}")
+        self._exec_write("[dim]describe your preferences, type 'done' when finished[/dim]")
 
         # Get the LLM to respond with its opening question
         import asyncio
@@ -513,6 +629,24 @@ class ReereeApp(App):
 
         command = parts[0]
         args = parts[1] if len(parts) > 1 else ""
+
+        # File viewer intercepts: :q closes file, :w saves file, :wq both
+        if self._file_viewer_path is not None:
+            if command in ("q", "quit"):
+                self._close_file_viewer()
+                return
+            elif command in ("q!", "quit!"):
+                self._close_file_viewer()
+                return
+            elif command == "w" and not args:
+                self._save_file_viewer()
+                return
+            elif command == "wq":
+                self._save_file_viewer()
+                self._close_file_viewer()
+                return
+            # Other commands fall through — you can :file another file,
+            # :chat, :help, etc. while a file is open
 
         if command in ("q", "quit"):
             self._save_plan()
@@ -579,27 +713,27 @@ class ReereeApp(App):
             try:
                 did = int(args.strip())
                 if self._daemon_registry.pause(did):
-                    self._exec_write(f"[yellow]Paused daemon d{did}[/yellow]")
+                    self._exec_write(f"d{did} paused")
                 else:
-                    self._exec_write(f"[red]Cannot pause d{did} (not active)[/red]")
+                    self._exec_write(f"d{did} not active")
             except ValueError:
                 self.notify("Usage: :pause N", severity="warning")
         elif command == "resume" and args:
             try:
                 did = int(args.strip())
                 if self._daemon_registry.resume(did):
-                    self._exec_write(f"[green]Resumed daemon d{did}[/green]")
+                    self._exec_write(f"d{did} resumed")
                 else:
-                    self._exec_write(f"[red]Cannot resume d{did} (not paused)[/red]")
+                    self._exec_write(f"d{did} not paused")
             except ValueError:
                 self.notify("Usage: :resume N", severity="warning")
         elif command == "kill" and args:
             try:
                 did = int(args.strip())
                 if self._daemon_registry.kill(did):
-                    self._exec_write(f"[red]Killed daemon d{did}[/red]")
+                    self._exec_write(f"d{did} killed")
                 else:
-                    self._exec_write(f"[red]No daemon d{did}[/red]")
+                    self._exec_write(f"d{did} not found")
             except ValueError:
                 self.notify("Usage: :kill N", severity="warning")
         elif command == "setup":
@@ -686,7 +820,7 @@ class ReereeApp(App):
             editor.load_plan(self.plan)
             self._update_status()
             self.sub_title = str(self.project_dir.name)
-            self._exec_write(f"[bold]Scope: {self.project_dir}[/bold]")
+            self._exec_write(f"scope: {self.project_dir}")
             self._flog.info(f"Scope popped to: {self.project_dir}")
             return
 
@@ -757,7 +891,7 @@ class ReereeApp(App):
         if target:
             self._chat_target = target
             self._chat_messages = []  # Fresh context for new target
-            self._exec_write(f"[bold]Chat target: {target} daemon[/bold]")
+            self._exec_write(f"chat: {target}")
             panel.add_class("visible")
             self.query_one("#chat-input", Input).focus()
         elif panel.has_class("visible"):
@@ -766,7 +900,7 @@ class ReereeApp(App):
         else:
             panel.add_class("visible")
             if not self._chat_messages:
-                self._exec_write(f"[dim]Chat open — talking to {self._chat_target} daemon. Type 'exit' to close.[/dim]")
+                self._exec_write(f"[dim]chat: {self._chat_target} ('exit' to close)[/dim]")
             self.query_one("#chat-input", Input).focus()
 
     def _toggle_chat_off(self) -> None:
@@ -788,8 +922,8 @@ class ReereeApp(App):
         now = time.monotonic()
         for daemon in active:
             if daemon.last_log_time > 0 and now - daemon.last_log_time > 300:
-                self._exec_write(f"[yellow]⚠ d{daemon.id} hasn't reported in {int(now - daemon.last_log_time)}s[/yellow]")
-                self._flog.warning(f"Daemon {daemon.id} stalled — {int(now - daemon.last_log_time)}s since last output")
+                self._exec_write(f"[yellow]d{daemon.id} stalled ({int(now - daemon.last_log_time)}s)[/yellow]")
+                self._flog.warning(f"d{daemon.id} stalled {int(now - daemon.last_log_time)}s")
 
     @on(events.Key)
     def on_chat_escape(self, event: events.Key) -> None:
@@ -823,7 +957,7 @@ class ReereeApp(App):
             self.query_one("#chat-input", Input).placeholder = "chat with daemon (type 'exit' to close)"
             return
 
-        self._exec_write(f"[bold cyan]you:[/bold cyan] {msg}")
+        self._exec_write(f"> {msg}")
         self._flog.info(f"Chat [{self._chat_target}]: {msg}")
 
         if self._chat_busy:
@@ -923,19 +1057,14 @@ class ReereeApp(App):
                             self.config.routing = cfg_data["routing"]
                         # Save config
                         self.config.save(self.project_dir / ".reeree" / "config.json")
-                        self._exec_write("[green]Config updated:[/green]")
-                        self._exec_write(f"  model: {self.config.model}")
-                        self._exec_write(f"  api: {self.config.api_base}")
-                        self._exec_write(f"  autonomy: {self.config.autonomy}")
-                        self._exec_write(f"  context: {self.config.max_context_tokens:,} tokens")
-                        if self.config.models:
-                            self._exec_write(f"  routing: {self.config.routing}")
+                        routing = f", routing: {self.config.routing}" if self.config.models else ""
+                        self._exec_write(f"config saved: {self.config.model} @ {self.config.api_base}, autonomy={self.config.autonomy}{routing}")
                         self._update_status()
                     except (_json.JSONDecodeError, Exception) as e:
                         self._exec_write(f"[red]Config parse error: {e}[/red]")
 
             if display_response:
-                self._exec_write(f"[bold green]setup:[/bold green] {display_response}")
+                self._exec_write(f"setup: {display_response}")
 
         except Exception as e:
             self._exec_write(f"[red]Setup error: {e}[/red]")
@@ -1071,7 +1200,7 @@ class ReereeApp(App):
                         self._chat_messages, self.config, system=system,
                     )
                 finally:
-                    self._exec_write(f"[dim]turn {turn + 1}: {chat_daemon.elapsed_str}[/dim]")
+                    self._flog.info(f"chat turn {turn + 1}: {chat_daemon.elapsed_str}")
 
                 # Add response to history
                 self._chat_messages.append({"role": "assistant", "content": response})
@@ -1081,7 +1210,7 @@ class ReereeApp(App):
 
                 # Display in exec log
                 if display_response.strip():
-                    self._exec_write(f"[bold green]{self._chat_target}:[/bold green] {display_response}")
+                    self._exec_write(f"{self._chat_target}: {display_response}")
 
                 # If no actions were taken, we're done
                 if not action_results:
@@ -1144,13 +1273,10 @@ class ReereeApp(App):
                     self._exec_write(f"[red]Blocked: {reason}[/red]")
                     results.append(f"BLOCKED: {reason}")
                     continue
-                self._exec_write(f"[dim]$ {content}[/dim]")
                 result = run_shell(content, self.project_dir, autonomy=self.config.autonomy)
-                if result.output:
-                    display_output = result.output[:2000]
-                    if len(result.output) > 2000:
-                        display_output += f"\n... ({len(result.output)} chars total)"
-                    self._exec_write(f"[dim]{display_output}[/dim]")
+                status = "ok" if result.success else "fail"
+                out_len = len(result.output) if result.output else 0
+                self._exec_write(f"[dim]$ {content} → {status}" + (f" ({out_len} chars)" if out_len > 200 else "") + "[/dim]")
                 self._flog.info(f"Shell: {content} → {'ok' if result.success else 'fail'}")
                 results.append(f"$ {content}\n{result.output[:4000]}")
 
@@ -1158,11 +1284,8 @@ class ReereeApp(App):
                 filepath = tag[6:].strip()
                 full_path = self.project_dir / filepath
                 result = write_file(full_path, content + "\n", project_dir=self.project_dir)
-                if result.success:
-                    self._exec_write(f"[green]Wrote {filepath}[/green]")
-                else:
-                    self._exec_write(f"[red]Write failed: {result.output}[/red]")
-                self._flog.info(f"Write: {filepath} → {'ok' if result.success else 'fail'}")
+                self._exec_write(f"[dim]write {filepath} → {'ok' if result.success else 'fail: ' + result.output}[/dim]")
+                self._flog.info(f"write {filepath} → {'ok' if result.success else 'fail'}")
                 results.append(f"write {filepath}: {'ok' if result.success else result.output}")
 
             elif tag.startswith("edit:"):
@@ -1172,11 +1295,8 @@ class ReereeApp(App):
                 if edit_match:
                     old_text, new_text = edit_match.group(1), edit_match.group(2)
                     result = edit_file(full_path, old_text, new_text, project_dir=self.project_dir)
-                    if result.success:
-                        self._exec_write(f"[green]Edited {filepath}[/green]")
-                    else:
-                        self._exec_write(f"[red]Edit failed: {result.output}[/red]")
-                    self._flog.info(f"Edit: {filepath} → {'ok' if result.success else 'fail'}")
+                    self._exec_write(f"[dim]edit {filepath} → {'ok' if result.success else 'fail: ' + result.output}[/dim]")
+                    self._flog.info(f"edit {filepath} → {'ok' if result.success else 'fail'}")
                     results.append(f"edit {filepath}: {'ok' if result.success else result.output}")
                 else:
                     self._exec_write(f"[yellow]Edit parse error for {filepath}[/yellow]")
@@ -1191,12 +1311,8 @@ class ReereeApp(App):
                     continue
                 if full_path.exists() and full_path.is_file():
                     file_content = full_path.read_text()
-                    # Truncate for display, full for LLM
-                    if len(file_content) > 1000:
-                        self._exec_write(f"[dim]Read {filepath} ({len(file_content)} chars)[/dim]")
-                    else:
-                        self._exec_write(f"[dim]Read {filepath}[/dim]")
-                    self._flog.info(f"Read: {filepath} ({len(file_content)} chars)")
+                    self._exec_write(f"[dim]read {filepath} ({len(file_content)} chars)[/dim]")
+                    self._flog.info(f"read {filepath} ({len(file_content)} chars)")
                     results.append(f"=== {filepath} ===\n{file_content[:8000]}")
                 else:
                     self._exec_write(f"[yellow]File not found: {filepath}[/yellow]")
@@ -1220,8 +1336,8 @@ class ReereeApp(App):
                             cwd=self.project_dir, timeout=10
                         )
                         output = proc.stdout[:4000] or "No matches"
-                        self._exec_write(f"[dim]Search: {search_pattern} in {search_glob}[/dim]")
-                        self._flog.info(f"Search: {search_pattern} → {len(proc.stdout)} chars")
+                        self._exec_write(f"[dim]search {search_pattern} in {search_glob} ({len(proc.stdout)} chars)[/dim]")
+                        self._flog.info(f"search {search_pattern} → {len(proc.stdout)} chars")
                         results.append(f"search '{search_pattern}' in {search_glob}:\n{output}")
                     except Exception as e:
                         results.append(f"search error: {e}")
@@ -1243,7 +1359,7 @@ class ReereeApp(App):
                     proc = subprocess.run(
                         ["ls", "-la"], capture_output=True, text=True, cwd=full_dir
                     )
-                    self._exec_write(f"[dim]ls {dirpath}[/dim]")
+                    self._exec_write(f"[dim]ls {dirpath} ({len(proc.stdout.splitlines())} entries)[/dim]")
                     results.append(f"ls {dirpath}:\n{proc.stdout[:4000]}")
                 else:
                     results.append(f"ls {dirpath}: not found")
@@ -1410,7 +1526,7 @@ class ReereeApp(App):
         editor.load_plan(self.plan)
         self._save_plan()
         self._update_status()
-        self._exec_write(f"[green]+[/green] Added: {description}")
+        self._exec_write(f"+ {description}")
 
     def _delete_step(self, index_str: str) -> None:
         try:
@@ -1421,7 +1537,7 @@ class ReereeApp(App):
                 editor.load_plan(self.plan)
                 self._save_plan()
                 self._update_status()
-                self._exec_write(f"[red]-[/red] Deleted step {index_str}: {removed.description}")
+                self._exec_write(f"- step {index_str}: {removed.description}")
             else:
                 self.notify(f"Step {index_str} out of range", severity="error")
         except ValueError:
@@ -1471,12 +1587,61 @@ class ReereeApp(App):
             self.notify("Usage: :log [N]", severity="warning")
 
     def _show_file(self, path: str) -> None:
-        full_path = self.project_dir / path
-        if full_path.exists():
-            content = full_path.read_text()
-            self._exec_write(f"[bold]{path}[/bold]\n{content}")
-        else:
+        """Open a file in the file viewer, overlaying the plan editor.
+
+        :q in the file viewer closes it back to the plan.
+        :w saves changes, :wq saves and closes.
+        """
+        if not path.strip():
+            self.notify("Usage: :file <path>", severity="warning")
+            return
+
+        full_path = self.project_dir / path.strip()
+        if not full_path.exists():
             self.notify(f"File not found: {path}", severity="error")
+            return
+
+        self._file_viewer_path = full_path
+
+        # Replace the file viewer widget with a fresh one for this file
+        old_viewer = self.query_one("#file-viewer", FileViewer)
+        new_viewer = FileViewer(full_path, id="file-viewer")
+        new_viewer.add_class("visible")
+        old_viewer.replace(new_viewer)
+
+        # Hide plan editor, show file viewer
+        self.query_one("#plan-editor").styles.display = "none"
+        self.query_one("#file-viewer").styles.display = "block"
+        self.query_one("#file-viewer").focus()
+
+        self._exec_write(f"opened {path} (:q close, i edit, :w save)")
+        self._flog.info(f"File viewer: {full_path}")
+
+    def _close_file_viewer(self) -> None:
+        """Close the file viewer and return to the plan editor."""
+        viewer = self.query_one("#file-viewer", FileViewer)
+        # If in INSERT mode, switch back to NORMAL first
+        if viewer.vim_mode == "INSERT":
+            viewer.read_only = True
+            viewer.vim_mode = "NORMAL"
+
+        viewer.remove_class("visible")
+        viewer.styles.display = "none"
+        self.query_one("#plan-editor").styles.display = "block"
+        self.query_one("#plan-editor", PlanEditor).focus()
+        self.query_one("#status-bar", StatusBar).mode = "NORMAL"
+        self._file_viewer_path = None
+        self._exec_write("[dim]closed[/dim]")
+
+    def _save_file_viewer(self) -> bool:
+        """Save the file viewer's contents to disk."""
+        viewer = self.query_one("#file-viewer", FileViewer)
+        if viewer.save():
+            self._exec_write(f"saved {viewer.file_path.name}")
+            return True
+        else:
+            self._exec_write(f"[red]save failed: {viewer.file_path.name}[/red]")
+            return False
 
     def _set_option(self, args: str) -> None:
         parts = args.split(None, 1)
@@ -1535,7 +1700,7 @@ class ReereeApp(App):
             editor = self.query_one("#plan-editor", PlanEditor)
             editor.load_plan(self.plan)
             self._save_plan()
-            self._exec_write(f"[green]+[/green] Added: {instruction}")
+            self._exec_write(f"+ {instruction}")
             await self._dispatch_steps([new_idx])
         elif instruction and step_nums:
             # :w N "instruction" — attach instruction to step N, dispatch
@@ -1580,12 +1745,10 @@ class ReereeApp(App):
             step.status = "active"
             step.daemon_id = daemon.id
             editor.update_step_status(idx, "active")
-            self._exec_write(f"[cyan]▶ Daemon {daemon.id}:[/cyan] Step {idx+1} — {step.description}")
+            self._exec_write(f"d{daemon.id} → step {idx+1}: {step.description}")
             self._run_daemon(daemon.id, step, idx)
             dispatched += 1
 
-        if dispatched:
-            self._exec_write(f"[bold]Dispatched {dispatched} step(s)[/bold]")
         self._update_status()
 
     async def _dispatch_up_to(self, target_step: int) -> None:
@@ -1610,14 +1773,12 @@ class ReereeApp(App):
             step.status = "active"
             step.daemon_id = daemon.id
             editor.update_step_status(idx, "active")
-            self._exec_write(f"[cyan]▶ Daemon {daemon.id}:[/cyan] Step {idx+1} — {step.description}")
+            self._exec_write(f"d{daemon.id} → step {idx+1}: {step.description}")
             self._run_daemon(daemon.id, step, idx)
             dispatched += 1
 
-        if dispatched:
-            self._exec_write(f"[bold]Dispatched {dispatched} step(s) up to step {target_step + 1}[/bold]")
-        else:
-            self._exec_write("[dim]No pending steps up to cursor[/dim]")
+        if not dispatched:
+            self._exec_write("[dim]no pending steps up to cursor[/dim]")
         self._update_status()
 
     async def _dispatch_all(self) -> None:
@@ -1631,10 +1792,9 @@ class ReereeApp(App):
         pending = [(i, s) for i, s in enumerate(self.plan.steps)
                    if s.status == "pending"]
         if not pending:
-            self._exec_write("[dim]No pending steps to dispatch[/dim]")
+            self._exec_write("[dim]no pending steps[/dim]")
             return
 
-        self._exec_write(f"[bold]Dispatching all {len(pending)} pending step(s)...[/bold]")
         for idx, step in pending:
             daemon = self._daemon_registry.spawn(
                 DaemonKind.STEP, step.description,
@@ -1643,7 +1803,7 @@ class ReereeApp(App):
             step.status = "active"
             step.daemon_id = daemon.id
             editor.update_step_status(idx, "active")
-            self._exec_write(f"[cyan]▶ Daemon {daemon.id}:[/cyan] Step {idx+1} — {step.description}")
+            self._exec_write(f"d{daemon.id} → step {idx+1}: {step.description}")
             self._run_daemon(daemon.id, step, idx)
 
         self._update_status()
@@ -1655,10 +1815,9 @@ class ReereeApp(App):
 
         pending = self.plan.dispatchable_steps
         if not pending:
-            self._exec_write("[dim]No pending steps to dispatch[/dim]")
+            self._exec_write("[dim]no pending steps[/dim]")
             return
 
-        self._exec_write(f"[bold]Dispatching {min(len(pending), 2)} daemon(s)...[/bold]")
         for idx, step in pending[:2]:
             daemon = self._daemon_registry.spawn(
                 DaemonKind.STEP, step.description,
@@ -1668,7 +1827,7 @@ class ReereeApp(App):
             step.daemon_id = daemon.id
             editor.update_step_status(idx, "active")
             self._update_status()
-            self._exec_write(f"[cyan]▶ Daemon {daemon.id}:[/cyan] Step {idx+1} — {step.description}")
+            self._exec_write(f"d{daemon.id} → step {idx+1}: {step.description}")
 
             self._run_daemon(daemon.id, step, idx)
 
@@ -1702,13 +1861,11 @@ class ReereeApp(App):
                 self.plan.steps[step_index].commit_hash = commit_hash
                 self._save_plan()
                 summary = result.get('summary', '')
-                hash_str = f" [{commit_hash[:7]}]" if commit_hash else ""
+                hash_str = f" {commit_hash[:7]}" if commit_hash else ""
+                summary_str = f" — {summary}" if summary else ""
                 self._exec_write(
-                    f"[green]✓[/green] [bold]d{daemon_id}[/bold] "
-                    f"{step.description}{hash_str}  [dim]{time_str}[/dim]"
+                    f"[green]done[/green] d{daemon_id}{hash_str} ({time_str}){summary_str}"
                 )
-                if summary:
-                    self._exec_write(f"  [dim]{summary}[/dim]")
 
                 # Apply notes to next pending step
                 next_notes = result.get("next_step_notes", [])
@@ -1719,10 +1876,9 @@ class ReereeApp(App):
                 self.plan.steps[step_index].status = "failed"
                 self.plan.steps[step_index].error = result.get("error", "unknown")
                 self._save_plan()
+                err = result.get('error', '')
                 self._exec_write(
-                    f"[red]✗[/red] [bold]d{daemon_id}[/bold] "
-                    f"{step.description}  [dim]{time_str}[/dim]  "
-                    f"[red]{result.get('error', '')}[/red]"
+                    f"[red]fail[/red] d{daemon_id} ({time_str}) {err}"
                 )
 
             if daemon:
@@ -1734,7 +1890,7 @@ class ReereeApp(App):
             if daemon:
                 daemon.status = DaemonStatus.FAILED
                 daemon.error = str(e)
-            self._exec_write(f"[red]✗ d{daemon_id} exception:[/red] {e}")
+            self._exec_write(f"[red]fail[/red] d{daemon_id}: {e}")
             self._update_status()
 
     def _run_daemon(self, daemon_id: int, step, step_index: int) -> None:
@@ -1771,13 +1927,11 @@ class ReereeApp(App):
         daemon = self._daemon_registry.get(daemon_id)
         if daemon:
             daemon.append_log(message)
-            # Show scope tag if daemon is from a different scope than current
-            if daemon.scope and daemon.scope != self.project_dir.name:
-                # Background daemon from another scope — quieter output
-                self._flog.info(f"[d{daemon_id}:{daemon.scope}] {message}")
-                return
-        # Stream daemon output to exec log + file log
-        self._exec_write(f"  [dim][d{daemon_id}][/dim] {message}")
+        # Always log to file
+        self._flog.info(f"d{daemon_id}: {message}")
+        # Only show actions and status changes in TUI, not LLM chatter
+        if any(message.startswith(p) for p in ("$ ", "Wrote ", "Edited ", "Read ", "Search:", "EXCEPTION")):
+            self._exec_write(f"[dim]d{daemon_id}[/dim] {message}")
 
     async def _undo_step(self, step_str: str) -> None:
         from ..executor import git_revert_last
@@ -1812,7 +1966,7 @@ class ReereeApp(App):
             self._exec_write("[dim]No local doc cross-references found.[/dim]")
             return
 
-        self._exec_write(f"[bold]Propagating coherence check across {len(doc_paths)} linked docs...[/bold]")
+        self._exec_write(f"propagating coherence across {len(doc_paths)} linked docs")
         await self._run_coherence_check(doc_paths)
 
     async def _cohere(self, args: str) -> None:
@@ -1850,9 +2004,7 @@ class ReereeApp(App):
 
         # Deduplicate
         doc_paths = list(dict.fromkeys(doc_paths))
-        self._exec_write(f"[bold]Checking coherence across {len(doc_paths)} docs...[/bold]")
-        for dp in doc_paths:
-            self._exec_write(f"  [dim]{dp.relative_to(self.project_dir)}[/dim]")
+        self._exec_write(f"coherence check: {len(doc_paths)} docs")
         await self._run_coherence_check(doc_paths)
 
     async def _run_coherence_check(self, doc_paths: list) -> None:
@@ -1897,7 +2049,7 @@ class ReereeApp(App):
             scope=str(self.project_dir.name),
         )
         did = daemon.id
-        self._exec_write(f"[cyan]Coherence daemon d{did} dispatched[/cyan]")
+        self._exec_write(f"d{did} → coherence ({len(doc_contents)} docs, {total_chars} chars)")
 
         import asyncio
 
@@ -1906,11 +2058,11 @@ class ReereeApp(App):
                 messages = [{"role": "user", "content": user_msg}]
                 response = await chat_async(messages, self.config, system=system)
                 self._daemon_log(did, response)
-                self._exec_write(f"[green]d{did} coherence check complete[/green]")
+                self._exec_write(f"[green]done[/green] d{did} coherence")
                 daemon.status = DaemonStatus.DONE
             except Exception as e:
                 self._daemon_log(did, f"ERROR: {e}")
-                self._exec_write(f"[red]d{did} coherence check failed: {e}[/red]")
+                self._exec_write(f"[red]fail[/red] d{did} coherence: {e}")
                 daemon.status = DaemonStatus.FAILED
                 daemon.error = str(e)
 
