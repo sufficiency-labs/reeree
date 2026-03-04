@@ -909,31 +909,32 @@ class TestDaemonState:
         """No daemons are active on startup."""
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
-            assert len(app._daemons) == 0
+            assert app._daemon_registry.total_count == 0
             status = app.query_one("#status-bar", StatusBar)
             assert status.active_daemons == 0
 
     @pytest.mark.asyncio
     async def test_daemon_id_increments(self, tmp_path):
-        """Each dispatched daemon gets a unique, incrementing ID."""
+        """Each spawned daemon gets a unique, incrementing ID."""
+        from reeree.daemon_registry import DaemonKind
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
-            assert app._next_daemon_id == 1
-            # Simulate adding a daemon
-            app._daemons[1] = {"status": "active", "step_index": 0, "log": ""}
-            app._next_daemon_id = 2
-            assert app._next_daemon_id == 2
+            d1 = app._daemon_registry.spawn(DaemonKind.STEP, "first")
+            d2 = app._daemon_registry.spawn(DaemonKind.STEP, "second")
+            assert d1.id == 1
+            assert d2.id == 2
 
     @pytest.mark.asyncio
     async def test_daemon_log_appends(self, tmp_path):
         """_daemon_log appends messages to daemon log."""
+        from reeree.daemon_registry import DaemonKind
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
-            app._daemons[1] = {"status": "active", "step_index": 0, "log": ""}
-            app._daemon_log(1, "Starting execution")
-            app._daemon_log(1, "Done")
-            assert "Starting execution" in app._daemons[1]["log"]
-            assert "Done" in app._daemons[1]["log"]
+            daemon = app._daemon_registry.spawn(DaemonKind.STEP, "test")
+            app._daemon_log(daemon.id, "Starting execution")
+            app._daemon_log(daemon.id, "Done")
+            assert "Starting execution" in daemon.log
+            assert "Done" in daemon.log
 
 
 # =============================================================================

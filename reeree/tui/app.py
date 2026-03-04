@@ -13,6 +13,7 @@ from textual.reactive import reactive
 from textual import events, on
 
 from ..config import Config
+from ..daemon_registry import DaemonRegistry, DaemonKind, DaemonStatus
 from ..plan import Plan
 
 
@@ -328,8 +329,7 @@ class ReereeApp(App):
         self.project_dir = project_dir
         self.config = config
         self.plan = plan or Plan(intent="", steps=[])
-        self._daemons: dict[int, dict] = {}
-        self._next_daemon_id = 1
+        self._daemon_registry = DaemonRegistry()
         self._flog = _setup_file_logger(project_dir)
         self._flog.info(f"Project: {project_dir}")
         self._flog.info(f"Model: {config.model}")
@@ -415,9 +415,8 @@ class ReereeApp(App):
         status = self.query_one("#status-bar", StatusBar)
         if self.plan.steps:
             status.progress = self.plan.progress
-        active = sum(1 for w in self._daemons.values() if w.get("status") == "active")
-        status.active_daemons = active
-        status.daemon_count = len(self._daemons)
+        status.active_daemons = self._daemon_registry.active_count
+        status.daemon_count = self._daemon_registry.total_count
 
     def _exec_write(self, message: str) -> None:
         """Write to the execution log (right pane) and file log."""
@@ -662,8 +661,7 @@ class ReereeApp(App):
 
     def _show_scope(self) -> None:
         """Show the current scope stack."""
-        active_total = sum(1 for d in self._daemons.values() if d.get("status") == "active")
-        lines = [f"[bold]Scope stack:[/bold]  [dim]({active_total} daemons running globally)[/dim]"]
+        lines = [f"[bold]Scope stack:[/bold]  [dim]({self._daemon_registry.active_count} daemons running globally)[/dim]"]
         for i, (pdir, plan, _chat, _target) in enumerate(self._scope_stack):
             done, total = plan.progress if plan.steps else (0, 0)
             lines.append(
@@ -707,18 +705,16 @@ class ReereeApp(App):
         - Did any watched files change?
         - Are any active daemons stalled?
         """
-        active = sum(1 for d in self._daemons.values() if d.get("status") == "active")
-        if active > 0:
-            self._flog.debug(f"Heartbeat: {active} active daemons")
+        active = self._daemon_registry.active()
+        if active:
+            self._flog.debug(f"Heartbeat: {len(active)} active daemons")
 
         # Check for stalled daemons (no log output in 5+ min)
         now = time.monotonic()
-        for did, dinfo in self._daemons.items():
-            if dinfo.get("status") == "active":
-                last = dinfo.get("last_log_time", now)
-                if now - last > 300:  # 5 min silence
-                    self._exec_write(f"[yellow]⚠ d{did} hasn't reported in {int(now - last)}s[/yellow]")
-                    self._flog.warning(f"Daemon {did} stalled — {int(now - last)}s since last output")
+        for daemon in active:
+            if daemon.last_log_time > 0 and now - daemon.last_log_time > 300:
+                self._exec_write(f"[yellow]⚠ d{daemon.id} hasn't reported in {int(now - daemon.last_log_time)}s[/yellow]")
+                self._flog.warning(f"Daemon {daemon.id} stalled — {int(now - daemon.last_log_time)}s since last output")
 
     @on(events.Key)
     def on_chat_escape(self, event: events.Key) -> None:
@@ -779,9 +775,9 @@ class ReereeApp(App):
 
             # Daemon execution history
             daemon_history = ""
-            for did, dinfo in self._daemons.items():
-                if dinfo.get("log"):
-                    daemon_history += f"\n--- Daemon {did} ---\n{dinfo['log'][-500:]}\n"
+            for daemon in self._daemon_registry.all():
+                if daemon.log:
+                    daemon_history += f"\n--- Daemon {daemon.id} ---\n{daemon.log[-500:]}\n"
 
             system = (
                 f"You are an executor daemon for a coding project.\n"
@@ -1292,9 +1288,9 @@ class ReereeApp(App):
     def _show_daemon_log(self, daemon_str: str) -> None:
         try:
             wid = int(daemon_str) if daemon_str else 1
-            if wid in self._daemons:
-                log_text = self._daemons[wid].get("log", "No log yet")
-                self._exec_write(f"[bold]Daemon {wid} log:[/bold]\n{log_text}")
+            daemon = self._daemon_registry.get(wid)
+            if daemon:
+                self._exec_write(f"[bold]Daemon {wid} log:[/bold]\n{daemon.log or 'No log yet'}")
             else:
                 self.notify(f"No daemon {wid}", severity="warning")
         except ValueError:
@@ -1403,14 +1399,15 @@ class ReereeApp(App):
                 self._exec_write(f"[dim]Step {idx + 1} already {step.status}[/dim]")
                 continue
 
-            daemon_id = self._next_daemon_id
-            self._next_daemon_id += 1
+            daemon = self._daemon_registry.spawn(
+                DaemonKind.STEP, step.description,
+                step_index=idx, scope=self.project_dir.name,
+            )
             step.status = "active"
-            step.daemon_id = daemon_id
-            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": "", "scope": self.project_dir.name}
+            step.daemon_id = daemon.id
             editor.update_step_status(idx, "active")
-            self._exec_write(f"[cyan]▶ Daemon {daemon_id}:[/cyan] Step {idx+1} — {step.description}")
-            self._run_daemon(daemon_id, step, idx)
+            self._exec_write(f"[cyan]▶ Daemon {daemon.id}:[/cyan] Step {idx+1} — {step.description}")
+            self._run_daemon(daemon.id, step, idx)
             dispatched += 1
 
         if dispatched:
@@ -1432,14 +1429,15 @@ class ReereeApp(App):
             if step.status != "pending":
                 continue
 
-            daemon_id = self._next_daemon_id
-            self._next_daemon_id += 1
+            daemon = self._daemon_registry.spawn(
+                DaemonKind.STEP, step.description,
+                step_index=idx, scope=self.project_dir.name,
+            )
             step.status = "active"
-            step.daemon_id = daemon_id
-            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": "", "scope": self.project_dir.name}
+            step.daemon_id = daemon.id
             editor.update_step_status(idx, "active")
-            self._exec_write(f"[cyan]▶ Daemon {daemon_id}:[/cyan] Step {idx+1} — {step.description}")
-            self._run_daemon(daemon_id, step, idx)
+            self._exec_write(f"[cyan]▶ Daemon {daemon.id}:[/cyan] Step {idx+1} — {step.description}")
+            self._run_daemon(daemon.id, step, idx)
             dispatched += 1
 
         if dispatched:
@@ -1464,14 +1462,15 @@ class ReereeApp(App):
 
         self._exec_write(f"[bold]Dispatching all {len(pending)} pending step(s)...[/bold]")
         for idx, step in pending:
-            daemon_id = self._next_daemon_id
-            self._next_daemon_id += 1
+            daemon = self._daemon_registry.spawn(
+                DaemonKind.STEP, step.description,
+                step_index=idx, scope=self.project_dir.name,
+            )
             step.status = "active"
-            step.daemon_id = daemon_id
-            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": "", "scope": self.project_dir.name}
+            step.daemon_id = daemon.id
             editor.update_step_status(idx, "active")
-            self._exec_write(f"[cyan]▶ Daemon {daemon_id}:[/cyan] Step {idx+1} — {step.description}")
-            self._run_daemon(daemon_id, step, idx)
+            self._exec_write(f"[cyan]▶ Daemon {daemon.id}:[/cyan] Step {idx+1} — {step.description}")
+            self._run_daemon(daemon.id, step, idx)
 
         self._update_status()
 
@@ -1487,22 +1486,24 @@ class ReereeApp(App):
 
         self._exec_write(f"[bold]Dispatching {min(len(pending), 2)} daemon(s)...[/bold]")
         for idx, step in pending[:2]:
-            daemon_id = self._next_daemon_id
-            self._next_daemon_id += 1
+            daemon = self._daemon_registry.spawn(
+                DaemonKind.STEP, step.description,
+                step_index=idx, scope=self.project_dir.name,
+            )
             step.status = "active"
-            step.daemon_id = daemon_id
-            self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": "", "scope": self.project_dir.name}
+            step.daemon_id = daemon.id
             editor.update_step_status(idx, "active")
             self._update_status()
-            self._exec_write(f"[cyan]▶ Daemon {daemon_id}:[/cyan] Step {idx+1} — {step.description}")
+            self._exec_write(f"[cyan]▶ Daemon {daemon.id}:[/cyan] Step {idx+1} — {step.description}")
 
-            self._run_daemon(daemon_id, step, idx)
+            self._run_daemon(daemon.id, step, idx)
 
     async def _run_daemon_task(self, daemon_id: int, step, step_index: int) -> None:
         from ..daemon_executor import dispatch_step
 
         # Mount progress widget
-        scope = self._daemons[daemon_id].get("scope", "")
+        daemon = self._daemon_registry.get(daemon_id)
+        scope = daemon.scope if daemon else ""
         progress = DaemonProgress(
             daemon_id, step.description, scope=scope,
             id=f"dp-{daemon_id}",
@@ -1579,7 +1580,8 @@ class ReereeApp(App):
                     f"[red]{result.get('error', '')}[/red]"
                 )
 
-            self._daemons[daemon_id]["status"] = status
+            if daemon:
+                daemon.status = DaemonStatus.DONE if status == "done" else DaemonStatus.FAILED
             self._update_status()
 
         except Exception as e:
@@ -1590,7 +1592,9 @@ class ReereeApp(App):
             except Exception:
                 pass
             self._daemon_log(daemon_id, f"EXCEPTION: {e}")
-            self._daemons[daemon_id]["status"] = "failed"
+            if daemon:
+                daemon.status = DaemonStatus.FAILED
+                daemon.error = str(e)
             self._exec_write(f"[red]✗ d{daemon_id} exception:[/red] {e}")
             self._update_status()
 
@@ -1625,14 +1629,13 @@ class ReereeApp(App):
             )
 
     def _daemon_log(self, daemon_id: int, message: str) -> None:
-        if daemon_id in self._daemons:
-            self._daemons[daemon_id]["log"] += message + "\n"
-            self._daemons[daemon_id]["last_log_time"] = time.monotonic()
+        daemon = self._daemon_registry.get(daemon_id)
+        if daemon:
+            daemon.append_log(message)
             # Show scope tag if daemon is from a different scope than current
-            scope = self._daemons[daemon_id].get("scope", "")
-            if scope and scope != self.project_dir.name:
+            if daemon.scope and daemon.scope != self.project_dir.name:
                 # Background daemon from another scope — quieter output
-                self._flog.info(f"[d{daemon_id}:{scope}] {message}")
+                self._flog.info(f"[d{daemon_id}:{daemon.scope}] {message}")
                 return
         # Stream daemon output to exec log + file log
         self._exec_write(f"  [dim][d{daemon_id}][/dim] {message}")
@@ -1750,16 +1753,11 @@ class ReereeApp(App):
         user_msg = f"Check these documents for coherence:\n\n{''.join(doc_contents)}"
 
         # Dispatch as a daemon task
-        did = self._next_daemon_id
-        self._next_daemon_id += 1
-        self._daemons[did] = {
-            "task": None,
-            "step_index": -1,
-            "status": "active",
-            "log": "",
-            "last_log_time": time.monotonic(),
-            "scope": str(self.project_dir.name),
-        }
+        daemon = self._daemon_registry.spawn(
+            DaemonKind.COHERENCE, "coherence check",
+            scope=str(self.project_dir.name),
+        )
+        did = daemon.id
         self._exec_write(f"[cyan]Coherence daemon d{did} dispatched[/cyan]")
 
         import asyncio
@@ -1770,14 +1768,15 @@ class ReereeApp(App):
                 response = await chat_async(messages, self.config, system=system)
                 self._daemon_log(did, response)
                 self._exec_write(f"[green]d{did} coherence check complete[/green]")
-                self._daemons[did]["status"] = "done"
+                daemon.status = DaemonStatus.DONE
             except Exception as e:
                 self._daemon_log(did, f"ERROR: {e}")
                 self._exec_write(f"[red]d{did} coherence check failed: {e}[/red]")
-                self._daemons[did]["status"] = "failed"
+                daemon.status = DaemonStatus.FAILED
+                daemon.error = str(e)
 
         task = asyncio.create_task(run_coherence())
-        self._daemons[did]["task"] = task
+        daemon.task = task
 
 
 class CommandScreen(ModalScreen[str]):
