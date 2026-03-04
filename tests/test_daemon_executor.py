@@ -7,44 +7,55 @@ import pytest
 
 from reeree.config import Config
 from reeree.plan import Step
-from reeree.daemon_executor import _parse_llm_json, dispatch_step
+from reeree.daemon_executor import _parse_llm_response, dispatch_step
 
 
-class TestParseLlmJson:
-    """Test the robust JSON parser that handles malformed LLM output."""
+class TestParseLlmResponse:
+    """Test the YAML/JSON parser that handles LLM output."""
 
     def test_clean_json(self):
-        result = _parse_llm_json('{"actions": [], "summary": "done"}')
-        assert result == {"actions": [], "summary": "done"}
+        result = _parse_llm_response('{"actions": [], "summary": "done"}')
+        assert result["actions"] == []
+        assert result["summary"] == "done"
 
     def test_json_with_markdown_fences(self):
-        result = _parse_llm_json('```json\n{"actions": [], "summary": "done"}\n```')
+        result = _parse_llm_response('```json\n{"actions": [], "summary": "done"}\n```')
         assert result is not None
         assert result["summary"] == "done"
 
+    def test_clean_yaml(self):
+        result = _parse_llm_response('actions:\n  - type: read\n    path: file.py\nsummary: "read it"')
+        assert result is not None
+        assert len(result["actions"]) == 1
+        assert result["actions"][0]["type"] == "read"
+
+    def test_yaml_with_markdown_fences(self):
+        result = _parse_llm_response('```yaml\nactions:\n  - type: shell\n    command: "ls"\nsummary: "listed"\n```')
+        assert result is not None
+        assert result["actions"][0]["command"] == "ls"
+
     def test_json_with_leading_text(self):
-        result = _parse_llm_json('Here is the result:\n{"actions": [], "summary": "done"}')
+        result = _parse_llm_response('Here is the result:\n{"actions": [], "summary": "done"}')
         assert result is not None
         assert result["summary"] == "done"
 
     def test_json_with_trailing_text(self):
-        result = _parse_llm_json('{"actions": [], "summary": "done"}\n\nLet me know if you need more.')
+        result = _parse_llm_response('{"actions": [], "summary": "done"}\n\nLet me know if you need more.')
         assert result is not None
         assert result["summary"] == "done"
 
     def test_truncated_json(self):
         """Parser should handle JSON that got cut off."""
-        # This simulates a model that ran out of tokens
-        result = _parse_llm_json('{"actions": [{"type": "read", "path": "file.py"}], "summary": "read')
+        result = _parse_llm_response('{"actions": [{"type": "read", "path": "file.py"}], "summary": "read')
         # May or may not parse — should not crash
         assert result is None or isinstance(result, dict)
 
     def test_empty_input(self):
-        result = _parse_llm_json("")
+        result = _parse_llm_response("")
         assert result is None
 
-    def test_no_json_at_all(self):
-        result = _parse_llm_json("This is just plain text with no JSON.")
+    def test_no_structured_data(self):
+        result = _parse_llm_response("This is just plain text with no YAML or JSON.")
         assert result is None
 
     def test_nested_json(self):
@@ -54,16 +65,28 @@ class TestParseLlmJson:
             ],
             "summary": "renamed function",
         }
-        result = _parse_llm_json(json.dumps(data))
+        result = _parse_llm_response(json.dumps(data))
         assert result is not None
         assert len(result["actions"]) == 1
         assert result["actions"][0]["type"] == "edit"
 
-    def test_json_with_escaped_newlines(self):
-        text = '{"actions": [{"type": "edit", "path": "f.py", "old": "line1\\nline2", "new": "line1\\nline2\\nline3"}], "summary": "added line"}'
-        result = _parse_llm_json(text)
+    def test_yaml_multiline_content(self):
+        yaml_text = 'actions:\n  - type: write\n    path: test.py\n    content: |\n      def hello():\n          print("hello")\nsummary: "wrote file"'
+        result = _parse_llm_response(yaml_text)
         assert result is not None
-        assert "\\n" in result["actions"][0]["old"] or "\n" in result["actions"][0]["old"]
+        assert "def hello" in result["actions"][0]["content"]
+
+    def test_next_step_notes_parsed(self):
+        yaml_text = 'actions: []\nsummary: "done"\nnext_step_notes:\n  - "found config at config.yaml"\n  - "needs error handling"'
+        result = _parse_llm_response(yaml_text)
+        assert result is not None
+        assert result["next_step_notes"] == ["found config at config.yaml", "needs error handling"]
+
+    def test_no_next_step_notes(self):
+        yaml_text = 'actions: []\nsummary: "done"'
+        result = _parse_llm_response(yaml_text)
+        assert result is not None
+        assert result.get("next_step_notes") is None or result.get("next_step_notes") == []
 
 
 class TestDispatchStep:

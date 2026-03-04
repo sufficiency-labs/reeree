@@ -97,7 +97,7 @@ Close the split. Back to full-screen document. Open a shell. Same pattern.
 
 ## Design Philosophy
 
-- **Dispatch, not chat.** The user sends intents and commands. LLMs execute and report status. No conversation.
+- **Dispatch, not *just* chat.** The user sends intents and commands. LLMs execute and report status. Chat exists for when you need it, but dispatch is the primary interface.
 - **Plan is the interface.** A visible, editable markdown file. Steering is spatial (move/add/delete steps), not conversational.
 - **Delegated agency.** The tool acts with the user's delegated authority. It can be autonomous within dispatch scope, but the user is always the principal. Like any process — it has agency, but it's the user's agency.
 - **Persistent sessions.** Daemon + Unix domain socket. Survives terminal death. Attach/detach like tmux.

@@ -13,25 +13,42 @@ from .executor import run_shell, write_file, edit_file, git_commit
 
 EXECUTOR_SYSTEM = """You execute ONE step of a coding plan.
 
-RESPOND WITH VALID JSON ONLY. No markdown, no explanation, no text outside the JSON.
+RESPOND WITH VALID YAML ONLY. No markdown, no explanation, no text outside the YAML.
 
 Format:
-{"actions": [<action>, ...], "summary": "one sentence"}
-
-Action types:
-{"type": "read", "path": "file.py"}
-{"type": "shell", "command": "ls -la"}
-{"type": "write", "path": "file.py", "content": "full file content here"}
-{"type": "edit", "path": "file.py", "old": "exact old text", "new": "new text"}
+```yaml
+actions:
+  - type: read
+    path: file.py
+  - type: shell
+    command: "ls -la"
+  - type: write
+    path: file.py
+    content: |
+      full file content here
+  - type: edit
+    path: file.py
+    old: "exact old text"
+    new: "new text"
+summary: "one sentence describing what was done"
+next_step_notes:
+  - "observation or suggestion relevant to the next step in the plan"
+  - "e.g. 'tests pass but coverage is low on edge cases'"
+```
 
 IMPORTANT:
-- old/new strings must be valid JSON strings (escape newlines as \\n, quotes as \\")
+- Use YAML block scalars (|) for multi-line content
 - Do EXACTLY what the step says, nothing more
-- ONLY output the JSON object, nothing else"""
+- ONLY output the YAML, nothing else
+- You may wrap the YAML in ```yaml fences if you prefer
+- next_step_notes is OPTIONAL — include it when you discovered something during execution
+  that would help the next step (findings, warnings, suggestions, file paths discovered)"""
 
 
-def _parse_llm_json(text: str) -> dict | None:
-    """Parse JSON from LLM output, handling common malformations."""
+def _parse_llm_response(text: str) -> dict | None:
+    """Parse YAML or JSON from LLM output. Tries YAML first, falls back to JSON."""
+    import yaml
+
     text = text.strip()
 
     # Strip markdown code fences
@@ -39,45 +56,50 @@ def _parse_llm_json(text: str) -> dict | None:
         text = text.split("\n", 1)[1] if "\n" in text else text[3:]
         if "```" in text:
             text = text.rsplit("```", 1)[0]
+    text = text.strip()
 
-    # Try direct parse first
+    # Try YAML first (YAML is a superset of JSON, so this handles both)
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
+        result = yaml.safe_load(text)
+        if isinstance(result, dict) and ("actions" in result or "summary" in result):
+            return result
+    except Exception:
         pass
 
-    # Find the first { and try to parse from there
+    # Try to find YAML/JSON in the text if there's surrounding prose
+    # Look for 'actions:' line (YAML) or '{' (JSON)
+    for marker in ["actions:", "{"]:
+        idx = text.find(marker)
+        if idx != -1:
+            substr = text[idx:]
+            try:
+                result = yaml.safe_load(substr)
+                if isinstance(result, dict):
+                    return result
+            except Exception:
+                pass
+
+    # Legacy JSON fallback with brace matching
     brace_start = text.find("{")
-    if brace_start == -1:
-        return None
-
-    # Try progressively shorter substrings (truncated JSON)
-    substr = text[brace_start:]
-    try:
-        return json.loads(substr)
-    except json.JSONDecodeError:
-        pass
-
-    # Try to find matching closing brace by counting
-    depth = 0
-    for i, c in enumerate(substr):
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(substr[:i + 1])
-                except json.JSONDecodeError:
-                    pass
-                break
-
-    # Last resort: try to fix truncated JSON by closing brackets
-    for suffix in ["]}}", "]}", "}", '"}]}', '"]}']:
+    if brace_start != -1:
+        substr = text[brace_start:]
         try:
-            return json.loads(substr + suffix)
+            return json.loads(substr)
         except json.JSONDecodeError:
             pass
+        # Try to find matching closing brace
+        depth = 0
+        for i, c in enumerate(substr):
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(substr[:i + 1])
+                    except json.JSONDecodeError:
+                        pass
+                    break
 
     return None
 
@@ -128,13 +150,14 @@ async def dispatch_step(
         return {"status": "failed", "error": str(e)}
 
     # Parse response — robust handling for small model output
-    data = _parse_llm_json(response)
+    data = _parse_llm_response(response)
     if data is None:
         log(f"PARSE ERROR — raw response:")
         log(response[:500])
         return {"status": "failed", "error": "Failed to parse LLM response as JSON"}
     actions = data.get("actions", [])
     summary = data.get("summary", "")
+    next_step_notes = data.get("next_step_notes", [])
 
     # Execute actions
     log(f"Actions: {len(actions)}")
@@ -188,11 +211,16 @@ async def dispatch_step(
                     commit_hash = word
                     break
             log(f"Done: {summary}")
-            return {"status": "done", "commit_hash": commit_hash, "summary": summary}
+            if next_step_notes:
+                log(f"Notes for next step: {next_step_notes}")
+            return {"status": "done", "commit_hash": commit_hash, "summary": summary,
+                    "next_step_notes": next_step_notes}
         else:
             log(f"Commit failed: {commit_result.output}")
-            return {"status": "done", "commit_hash": None, "summary": summary}
+            return {"status": "done", "commit_hash": None, "summary": summary,
+                    "next_step_notes": next_step_notes}
     else:
         failures = [r.output for r in results if not r.success]
         log(f"FAILED: {'; '.join(failures)}")
-        return {"status": "failed", "error": "; ".join(failures)}
+        return {"status": "failed", "error": "; ".join(failures),
+                "next_step_notes": next_step_notes}

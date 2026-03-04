@@ -1021,6 +1021,72 @@ class TestPlanUpdateFromChat:
             assert done == 1
 
 
+class TestAnnotateNextStep:
+    """Test that daemon notes propagate to the next pending step."""
+
+    @pytest.mark.asyncio
+    async def test_notes_added_to_next_pending(self, tmp_path):
+        """After step 1 completes, notes are added to step 2."""
+        plan = Plan(intent="test", steps=[
+            Step(description="first step", status="done"),
+            Step(description="second step"),
+            Step(description="third step"),
+        ])
+        app = _make_app(tmp_path, plan)
+        async with app.run_test() as pilot:
+            editor = app.query_one("#plan-editor", PlanEditor)
+            notes = ["found config at config.yaml", "needs error handling"]
+            app._annotate_next_step(0, notes, editor)
+
+            assert len(app.plan.steps[1].annotations) == 2
+            assert "[from step 1]" in app.plan.steps[1].annotations[0]
+            assert "config.yaml" in app.plan.steps[1].annotations[0]
+            # Step 3 should be untouched
+            assert len(app.plan.steps[2].annotations) == 0
+
+    @pytest.mark.asyncio
+    async def test_skips_active_steps(self, tmp_path):
+        """Notes skip over active steps to find the next pending one."""
+        plan = Plan(intent="test", steps=[
+            Step(description="done step", status="done"),
+            Step(description="active step", status="active"),
+            Step(description="pending step"),
+        ])
+        app = _make_app(tmp_path, plan)
+        async with app.run_test() as pilot:
+            editor = app.query_one("#plan-editor", PlanEditor)
+            app._annotate_next_step(0, ["note for pending"], editor)
+
+            assert len(app.plan.steps[1].annotations) == 0  # active — skipped
+            assert len(app.plan.steps[2].annotations) == 1  # pending — got it
+
+    @pytest.mark.asyncio
+    async def test_no_pending_steps_noop(self, tmp_path):
+        """No pending steps means no crash and no annotations."""
+        plan = Plan(intent="test", steps=[
+            Step(description="done", status="done"),
+            Step(description="also done", status="done"),
+        ])
+        app = _make_app(tmp_path, plan)
+        async with app.run_test() as pilot:
+            editor = app.query_one("#plan-editor", PlanEditor)
+            # Should not raise
+            app._annotate_next_step(0, ["orphan note"], editor)
+
+    @pytest.mark.asyncio
+    async def test_empty_notes_noop(self, tmp_path):
+        """Empty notes list doesn't modify the plan."""
+        plan = Plan(intent="test", steps=[
+            Step(description="done", status="done"),
+            Step(description="pending"),
+        ])
+        app = _make_app(tmp_path, plan)
+        async with app.run_test() as pilot:
+            editor = app.query_one("#plan-editor", PlanEditor)
+            app._annotate_next_step(0, [], editor)
+            assert len(app.plan.steps[1].annotations) == 0
+
+
 class TestMoveCommand:
     @pytest.mark.asyncio
     async def test_move_step_reorders(self, tmp_path):

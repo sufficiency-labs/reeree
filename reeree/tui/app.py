@@ -1563,6 +1563,11 @@ class ReereeApp(App):
                 )
                 if summary:
                     self._exec_write(f"  [dim]{summary}[/dim]")
+
+                # Apply notes to next pending step
+                next_notes = result.get("next_step_notes", [])
+                if next_notes:
+                    self._annotate_next_step(step_index, next_notes, editor)
             else:
                 editor.update_step_status(step_index, "failed")
                 self.plan.steps[step_index].status = "failed"
@@ -1592,6 +1597,32 @@ class ReereeApp(App):
     def _run_daemon(self, daemon_id: int, step, step_index: int) -> None:
         import asyncio
         asyncio.ensure_future(self._run_daemon_task(daemon_id, step, step_index))
+
+    def _annotate_next_step(self, completed_index: int, notes: list[str], editor: "PlanEditor") -> None:
+        """Apply daemon notes to the next pending step after a completed one."""
+        # Find next pending step
+        next_idx = None
+        for i in range(completed_index + 1, len(self.plan.steps)):
+            if self.plan.steps[i].status == "pending":
+                next_idx = i
+                break
+
+        if next_idx is None:
+            return
+
+        next_step = self.plan.steps[next_idx]
+        for note in notes:
+            if isinstance(note, str) and note.strip():
+                annotation = f"[from step {completed_index + 1}] {note.strip()}"
+                next_step.annotations.append(annotation)
+
+        if notes:
+            # Refresh editor display and save
+            editor.load_plan(self.plan)
+            self._save_plan()
+            self._exec_write(
+                f"  [dim]→ {len(notes)} note(s) added to step {next_idx + 1}[/dim]"
+            )
 
     def _daemon_log(self, daemon_id: int, message: str) -> None:
         if daemon_id in self._daemons:
