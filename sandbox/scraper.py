@@ -6,21 +6,9 @@ import os
 
 
 def fetch_page(url):
-    """Fetch a web page with error handling, timeout, and retries."""
-    import time
-    max_retries = 3
-    timeout = 10
-    
-    for attempt in range(max_retries):
-        try:
-            response = urllib.request.urlopen(url, timeout=timeout)
-            return response.read().decode()
-        except Exception as e:
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
-                continue
-            else:
-                raise e
+    """Fetch a web page. No error handling, no timeout, no retries."""
+    response = urllib.request.urlopen(url)
+    return response.read().decode()
 
 
 def parse_links(html):
@@ -39,9 +27,9 @@ def save_results(results, filename):
 def load_config():
     """Load config from environment. No defaults, no validation."""
     return {
-        'url': os.environ.get('SCRAPER_URL', 'http://example.com'),
-        'output': os.environ.get('OUTPUT_FILE', 'output.json'),
-        'max_pages': int(os.environ.get('MAX_PAGES', '10')),
+        'url': os.environ['SCRAPER_URL'],
+        'output': os.environ['OUTPUT_FILE'],
+        'max_pages': int(os.environ['MAX_PAGES']),
     }
 
 

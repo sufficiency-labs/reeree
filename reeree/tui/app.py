@@ -1,5 +1,7 @@
 """Main Textual application — the living document."""
 
+import logging
+from datetime import datetime
 from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -11,6 +13,27 @@ from textual import events, on
 
 from ..config import Config
 from ..plan import Plan
+
+
+def _setup_file_logger(project_dir: Path) -> logging.Logger:
+    """Set up a file logger at .reeree/session.log."""
+    log_dir = project_dir / ".reeree"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "session.log"
+
+    logger = logging.getLogger("reeree")
+    logger.setLevel(logging.DEBUG)
+
+    # Clear existing handlers
+    logger.handlers.clear()
+
+    fh = logging.FileHandler(log_file, mode="a")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(fh)
+
+    logger.info("=== Session started ===")
+    return logger
 
 
 class PlanEditor(TextArea):
@@ -76,6 +99,7 @@ class PlanEditor(TextArea):
         app = self.app
         if isinstance(app, ReereeApp):
             app.query_one("#status-bar", StatusBar).mode = "INSERT"
+            app._log.debug("Mode: INSERT")
 
     def _enter_normal_mode(self) -> None:
         """Switch to NORMAL mode — read-only, commands work."""
@@ -84,6 +108,7 @@ class PlanEditor(TextArea):
         app = self.app
         if isinstance(app, ReereeApp):
             app.query_one("#status-bar", StatusBar).mode = "NORMAL"
+            app._log.debug("Mode: NORMAL")
 
     def on_key(self, event: events.Key) -> None:
         if self.vim_mode == "NORMAL":
@@ -135,6 +160,13 @@ class PlanEditor(TextArea):
                 event.stop()
             elif event.key == "G":
                 self.action_cursor_line_end()
+                event.prevent_default()
+                event.stop()
+            elif event.key == "tab":
+                # Cycle focus to side panel
+                app = self.app
+                if isinstance(app, ReereeApp):
+                    app._focus_next_pane()
                 event.prevent_default()
                 event.stop()
 
@@ -213,7 +245,7 @@ class StatusBar(Static):
         color = mode_colors.get(self.mode, "bold white")
         progress_str = f"{done}/{total}" if total > 0 else "no plan"
         daemon_str = f"{self.active_daemons} active" if self.active_daemons else "idle"
-        return f" [{color}]{self.mode}[/{color}]  |  daemons: {daemon_str}  |  progress: {progress_str}  |  [dim]:go :add :diff :q  i=edit Esc=normal[/dim]"
+        return f" [{color}]{self.mode}[/{color}]  |  daemons: {daemon_str}  |  progress: {progress_str}  |  [dim]i=edit  :=cmd  Tab/^W=pane  :help[/dim]"
 
 
 class CommandInput(TextArea):
@@ -268,7 +300,7 @@ class ReereeApp(App):
     """
 
     BINDINGS = [
-        Binding("ctrl+w", "close_split", "Close split", show=False),
+        Binding("ctrl+w", "focus_side", "Focus side panel", show=False),
     ]
 
     def __init__(self, project_dir: Path, config: Config, plan: Plan | None = None):
@@ -279,6 +311,10 @@ class ReereeApp(App):
         self._daemons: dict[int, dict] = {}
         self._next_daemon_id = 1
         self._command_buffer = ""
+        self._log = _setup_file_logger(project_dir)
+        self._log.info(f"Project: {project_dir}")
+        self._log.info(f"Model: {config.model}")
+        self._log.info(f"Plan: {len(self.plan.steps)} steps — {self.plan.intent!r}")
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -305,20 +341,34 @@ class ReereeApp(App):
 
     def action_command_mode(self) -> None:
         """Enter command mode (vim : )."""
+        self._log.debug("Mode: COMMAND")
         status = self.query_one("#status-bar", StatusBar)
         status.mode = "COMMAND"
 
         async def handle_command(cmd: str) -> None:
             status.mode = "NORMAL"
             if cmd:
+                self._log.info(f"Command: :{cmd}")
                 await self.execute_command(cmd)
 
         self.push_screen(CommandScreen(), callback=lambda cmd: self.call_later(handle_command, cmd))
 
-    def action_close_split(self) -> None:
-        """Close the side panel."""
+    def action_focus_side(self) -> None:
+        """Toggle focus between plan editor and side panel."""
+        self._focus_next_pane()
+
+    def _focus_next_pane(self) -> None:
+        """Cycle focus: plan editor → side panel → plan editor."""
         panel = self.query_one("#side-panel")
-        panel.remove_class("visible")
+        editor = self.query_one("#plan-editor", PlanEditor)
+        side_content = self.query_one("#side-content", RichLog)
+
+        if panel.has_class("visible"):
+            if editor.has_focus:
+                side_content.focus()
+            else:
+                editor.focus()
+        # If side panel not visible, stay on editor
 
     def show_side_panel(self, content: str, title: str = "") -> None:
         """Show content in the side split pane."""
@@ -389,7 +439,7 @@ class ReereeApp(App):
         elif command == "kill" and args:
             self._kill_daemon(args)
         elif command == "close":
-            self.action_close_split()
+            self.query_one("#side-panel").remove_class("visible")
         elif command == "help":
             self._show_help()
         else:
@@ -420,7 +470,8 @@ class ReereeApp(App):
             "  :q               Quit\n"
             "  :wq              Save and quit\n"
             "  :help            This help\n"
-            "  Ctrl+W           Close side panel\n",
+            "  Tab / Ctrl+W     Cycle focus between panes\n"
+            "  :close           Close side panel\n",
             title="Help",
         )
 
@@ -529,9 +580,11 @@ class ReereeApp(App):
 
         pending = self.plan.dispatchable_steps
         if not pending:
+            self._log.info("Dispatch: no pending steps")
             self.notify("No pending steps to dispatch")
             return
 
+        self._log.info(f"Dispatch: {len(pending)} pending, dispatching up to 2")
         for idx, step in pending[:2]:  # Max 2 parallel for POC
             daemon_id = self._next_daemon_id
             self._next_daemon_id += 1
@@ -540,6 +593,7 @@ class ReereeApp(App):
             self._daemons[daemon_id] = {"status": "active", "step_index": idx, "log": ""}
             editor.update_step_status(idx, "active")
             self._update_status()
+            self._log.info(f"Daemon {daemon_id} dispatched: step {idx+1} — {step.description}")
             self.notify(f"Daemon {daemon_id}: {step.description[:50]}")
 
             self._run_daemon(daemon_id, step, idx)
@@ -564,12 +618,14 @@ class ReereeApp(App):
                 self.plan.steps[step_index].status = "done"
                 self.plan.steps[step_index].commit_hash = commit_hash
                 self._save_plan()
+                self._log.info(f"Daemon {daemon_id} DONE: {result.get('summary', '')} [commit: {commit_hash}]")
                 self.notify(f"Daemon {daemon_id} done: {result.get('summary', '')[:50]}")
             else:
                 editor.update_step_status(step_index, "failed")
                 self.plan.steps[step_index].status = "failed"
                 self.plan.steps[step_index].error = result.get("error", "unknown")
                 self._save_plan()
+                self._log.error(f"Daemon {daemon_id} FAILED: {result.get('error', '')}")
                 self.notify(f"Daemon {daemon_id} failed: {result.get('error', '')[:50]}", severity="error")
 
             self._daemons[daemon_id]["status"] = status
@@ -578,6 +634,7 @@ class ReereeApp(App):
         except Exception as e:
             self._daemon_log(daemon_id, f"EXCEPTION: {e}")
             self._daemons[daemon_id]["status"] = "failed"
+            self._log.exception(f"Daemon {daemon_id} EXCEPTION: {e}")
             self.notify(f"Daemon {daemon_id} error: {e}", severity="error")
             self._update_status()
 
@@ -590,6 +647,7 @@ class ReereeApp(App):
         """Append to a daemon's log."""
         if daemon_id in self._daemons:
             self._daemons[daemon_id]["log"] += message + "\n"
+        self._log.debug(f"[daemon-{daemon_id}] {message}")
 
     async def _undo_step(self, step_str: str) -> None:
         """Undo a step by reverting its git commit."""
