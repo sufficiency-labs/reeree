@@ -206,7 +206,6 @@ class ReereeApp(App):
     }
     #chat-panel {
         height: auto;
-        max-height: 30%;
         border-left: solid $secondary;
         border-top: solid $secondary;
         display: none;
@@ -216,10 +215,6 @@ class ReereeApp(App):
     }
     #chat-input {
         height: 3;
-    }
-    #chat-log {
-        height: 1fr;
-        min-height: 5;
     }
     #status-bar {
         dock: bottom;
@@ -255,8 +250,7 @@ class ReereeApp(App):
             with Vertical(id="right-panel"):
                 yield RichLog(id="exec-log", highlight=True, markup=True, wrap=True)
                 with Vertical(id="chat-panel"):
-                    yield RichLog(id="chat-log", highlight=True, markup=True, wrap=True)
-                    yield Input(placeholder="chat (optional)", id="chat-input")
+                    yield Input(placeholder="chat with daemon (type 'exit' to close)", id="chat-input")
         yield StatusBar(id="status-bar")
 
     def on_mount(self) -> None:
@@ -410,36 +404,50 @@ class ReereeApp(App):
         if target:
             self._chat_target = target
             self._chat_messages = []  # Fresh context for new target
-            chat_log = self.query_one("#chat-log", RichLog)
-            chat_log.clear()
-            chat_log.write(f"[bold]Chat: {target} daemon[/bold]")
+            self._exec_write(f"[bold]Chat target: {target} daemon[/bold]")
             panel.add_class("visible")
             self.query_one("#chat-input", Input).focus()
         elif panel.has_class("visible"):
             panel.remove_class("visible")
+            self.query_one("#plan-editor", PlanEditor).focus()
         else:
             panel.add_class("visible")
-            chat_log = self.query_one("#chat-log", RichLog)
             if not self._chat_messages:
-                chat_log.write(f"[bold]Chat: {self._chat_target} daemon[/bold]")
+                self._exec_write(f"[dim]Chat open — talking to {self._chat_target} daemon. Type 'exit' to close.[/dim]")
             self.query_one("#chat-input", Input).focus()
 
     def _toggle_chat_off(self) -> None:
         self.query_one("#chat-panel").remove_class("visible")
 
+    @on(events.Key)
+    def on_chat_escape(self, event: events.Key) -> None:
+        """Escape from chat input returns focus to plan editor."""
+        if event.key == "escape":
+            chat_input = self.query_one("#chat-input", Input)
+            if chat_input.has_focus:
+                self.query_one("#plan-editor", PlanEditor).focus()
+                event.prevent_default()
+                event.stop()
+
     @on(Input.Submitted, "#chat-input")
     def on_chat_submit(self, event: Input.Submitted) -> None:
-        """Handle chat input — send to executor daemon with full context."""
+        """Handle chat input — send to daemon, responses appear in exec log."""
         msg = event.value.strip()
         if not msg:
             return
         event.input.value = ""
-        chat_log = self.query_one("#chat-log", RichLog)
-        chat_log.write(f"[bold]>[/bold] {msg}")
+
+        # "exit" or "close" closes the chat interface
+        if msg.lower() in ("exit", "close", "quit", "q"):
+            self._toggle_chat_off()
+            self.query_one("#plan-editor", PlanEditor).focus()
+            return
+
+        self._exec_write(f"[bold cyan]you:[/bold cyan] {msg}")
         self._flog.info(f"Chat [{self._chat_target}]: {msg}")
 
         if self._chat_busy:
-            chat_log.write("[dim]Waiting for previous response...[/dim]")
+            self._exec_write("[dim]Waiting for previous response...[/dim]")
             return
 
         # Add user message to history
@@ -450,13 +458,17 @@ class ReereeApp(App):
         asyncio.ensure_future(self._chat_respond(msg))
 
     async def _chat_respond(self, user_msg: str) -> None:
-        """Get LLM response with persistent context."""
+        """Get LLM response with persistent context. Output goes to exec log.
+
+        The executor can modify the plan by including a ```plan block in its
+        response. The block contents replace the current plan markdown, the
+        editor updates live, and the plan is saved to disk.
+        """
         from ..llm import chat_async
         from ..context import gather_context
-        from ..plan import Step
+        from ..plan import Step, Plan
 
         self._chat_busy = True
-        chat_log = self.query_one("#chat-log", RichLog)
 
         try:
             # Build system prompt with project context
@@ -472,10 +484,26 @@ class ReereeApp(App):
 
             system = (
                 f"You are an executor daemon for a coding project.\n"
-                f"You have direct access to the project files and execution history.\n"
-                f"Answer questions about the code, suggest fixes, explain what happened.\n"
-                f"If the user asks you to do something, describe what you would change.\n"
-                f"Be concise and direct.\n\n"
+                f"You can READ and WRITE the plan. The plan is a living markdown document.\n"
+                f"You can modify the plan by including an updated version in a ```plan code block.\n"
+                f"When you include a ```plan block, the plan will be updated live in the editor and saved.\n\n"
+                f"Plan format — each step is a markdown checkbox:\n"
+                f"  - [ ] Step N: description          (pending)\n"
+                f"  - [x] Step N: description          (done)\n"
+                f"  - [>] Step N: description          (active)\n"
+                f"  - [!] Step N: description          (failed)\n"
+                f"  - [~] Step N: description          (blocked)\n"
+                f"  Indented > lines are annotations the executor reads as context.\n\n"
+                f"Example — to add two steps to a plan:\n"
+                f"```plan\n"
+                f"# Plan: fix the bugs\n\n"
+                f"- [x] Step 1: Fix the crash\n"
+                f"- [ ] Step 2: Add input validation\n"
+                f"  > check for empty strings and None\n"
+                f"- [ ] Step 3: Write tests\n"
+                f"```\n\n"
+                f"Be concise and direct. If the user asks you to change the plan, DO IT — "
+                f"include the updated ```plan block. Don't just describe what you would do.\n\n"
                 f"Project context:\n{context[:8000]}\n\n"
                 f"Current plan:\n{plan_md}\n\n"
             )
@@ -487,19 +515,59 @@ class ReereeApp(App):
             # Add response to history
             self._chat_messages.append({"role": "assistant", "content": response})
 
-            # Display
-            chat_log.write(f"\n{response}\n")
-            self._flog.info(f"Chat response: {response[:200]}")
+            # Check for plan update block in response
+            plan_updated = self._apply_plan_from_response(response)
 
-            # Keep message history manageable (last 20 turns)
+            # Display in exec log (same stream as everything else)
+            # Strip the plan block from display since we applied it
+            display_response = response
+            if plan_updated:
+                import re
+                display_response = re.sub(r'```plan\n.*?```', '[plan updated]', response, flags=re.DOTALL)
+                self._exec_write(f"[bold green]{self._chat_target}:[/bold green] {display_response}")
+                self._exec_write(f"[bold yellow]Plan updated and saved.[/bold yellow]")
+            else:
+                self._exec_write(f"[bold green]{self._chat_target}:[/bold green] {response}")
+
+            # Keep message history manageable
             if len(self._chat_messages) > 40:
                 self._chat_messages = self._chat_messages[-40:]
 
         except Exception as e:
-            chat_log.write(f"[red]Error: {e}[/red]")
+            self._exec_write(f"[red]Chat error: {e}[/red]")
             self._flog.error(f"Chat error: {e}")
         finally:
             self._chat_busy = False
+
+    def _apply_plan_from_response(self, response: str) -> bool:
+        """Extract ```plan block from LLM response and apply to editor.
+
+        Returns True if plan was updated.
+        """
+        import re
+        from ..plan import Plan
+
+        match = re.search(r'```plan\n(.*?)```', response, re.DOTALL)
+        if not match:
+            return False
+
+        plan_md = match.group(1).strip()
+        try:
+            new_plan = Plan.from_markdown(plan_md)
+            if not new_plan.steps and not new_plan.intent:
+                return False  # Empty parse — don't clobber the plan
+
+            self.plan = new_plan
+            editor = self.query_one("#plan-editor", PlanEditor)
+            editor.load_plan(self.plan)
+            self._save_plan()
+            self._update_status()
+            self._flog.info(f"Plan updated via chat: {len(new_plan.steps)} steps")
+            return True
+        except Exception as e:
+            self._flog.error(f"Failed to parse plan from chat: {e}")
+            self._exec_write(f"[red]Plan parse error: {e}[/red]")
+            return False
 
     def _save_plan(self) -> None:
         editor = self.query_one("#plan-editor", PlanEditor)
