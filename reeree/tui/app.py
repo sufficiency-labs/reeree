@@ -378,21 +378,89 @@ class ReereeApp(App):
         status.daemon_count = self._daemon_registry.total_count
 
     def _launch_setup(self) -> None:
-        """Launch the setup wizard (first-run or :setup command)."""
-        from .setup_screen import SetupScreen
+        """Launch setup as a chat daemon — natural language configuration.
 
-        def on_setup_done(config: Config | None) -> None:
-            if config is None:
-                return
-            self.config = config
-            config.save(self.project_dir / ".reeree" / "config.json")
-            self._exec_write("[green]Configuration saved[/green]")
-            self._exec_write(f"  model: {config.model}")
-            self._exec_write(f"  api: {config.api_base}")
-            self._exec_write(f"  autonomy: {config.autonomy}")
-            self._update_status()
+        Opens the chat panel with a "setup" daemon target. The daemon probes
+        available APIs and guides the user through configuration via conversation.
+        Chat is the right interface for expressing nuanced constraints like
+        "use ollama but fall back to together.ai for hard steps."
+        """
+        self._chat_target = "setup"
+        self._chat_messages = []
 
-        self.push_screen(SetupScreen(self.config), on_setup_done)
+        # Probe available APIs before starting the conversation
+        import os
+        probe_results = []
+        providers = [
+            ("ollama (local)", "http://localhost:11434/v1", None),
+            ("together.ai", "https://api.together.xyz/v1", "TOGETHER_API_KEY"),
+            ("openai", "https://api.openai.com/v1", "OPENAI_API_KEY"),
+        ]
+        for name, base, env_var in providers:
+            key = os.environ.get(env_var, "") if env_var else ""
+            if not key and env_var:
+                # Check common key file locations
+                key_file = {
+                    "TOGETHER_API_KEY": "~/.config/together/api_key",
+                    "OPENAI_API_KEY": "~/.config/openai/api_key",
+                }.get(env_var, "")
+                if key_file:
+                    from pathlib import Path
+                    kf = Path(key_file).expanduser()
+                    if kf.exists():
+                        key = kf.read_text().strip()
+            try:
+                import httpx
+                headers = {"Authorization": f"Bearer {key}"} if key else {}
+                resp = httpx.get(f"{base}/models", headers=headers, timeout=5.0)
+                available = resp.status_code == 200
+            except Exception:
+                available = False
+            status = "available" if available else "not detected"
+            has_key = "key found" if key else "no key"
+            probe_results.append(f"  {name}: {status}" + (f" ({has_key})" if env_var else ""))
+
+        probe_summary = "\n".join(probe_results)
+
+        # Current config state
+        current = (
+            f"Current config:\n"
+            f"  model: {self.config.model}\n"
+            f"  api_base: {self.config.api_base}\n"
+            f"  api_key: {'set' if self.config.api_key else 'not set'}\n"
+            f"  autonomy: {self.config.autonomy}\n"
+            f"  max_context_tokens: {self.config.max_context_tokens}\n"
+        )
+
+        # Seed the conversation with probe results as context
+        setup_context = (
+            f"Detected providers:\n{probe_summary}\n\n{current}\n"
+            f"The user wants to configure reeree. Help them set up their LLM provider, "
+            f"model, autonomy level, and context budget. Ask what they need."
+        )
+        self._chat_messages.append({"role": "user", "content": setup_context})
+
+        # Open chat panel
+        panel = self.query_one("#chat-panel")
+        panel.add_class("visible")
+        chat_input = self.query_one("#chat-input", Input)
+        chat_input.placeholder = "configure reeree (type 'done' when finished)"
+        chat_input.focus()
+
+        # Show probe results in exec log
+        self._exec_write("[bold]reeree setup[/bold] — tell me how you want this configured")
+        self._exec_write(f"[dim]Detected providers:[/dim]")
+        for line in probe_results:
+            self._exec_write(f"[dim]{line}[/dim]")
+        self._exec_write("")
+        self._exec_write("[dim]Just describe what you want in plain language.[/dim]")
+        self._exec_write("[dim]Examples: 'use ollama locally', 'together.ai with high autonomy',[/dim]")
+        self._exec_write("[dim]'ollama for fast tasks, together.ai for reasoning'[/dim]")
+        self._exec_write("")
+
+        # Get the LLM to respond with its opening question
+        import asyncio
+        asyncio.ensure_future(self._setup_respond())
 
     def _exec_write(self, message: str) -> None:
         """Write to the execution log (right pane) and file log."""
@@ -747,6 +815,14 @@ class ReereeApp(App):
             self.query_one("#plan-editor", PlanEditor).focus()
             return
 
+        # "done" in setup mode saves config and closes
+        if msg.lower() == "done" and self._chat_target == "setup":
+            self._exec_write("[green]Setup complete.[/green]")
+            self._toggle_chat_off()
+            self.query_one("#plan-editor", PlanEditor).focus()
+            self.query_one("#chat-input", Input).placeholder = "chat with daemon (type 'exit' to close)"
+            return
+
         self._exec_write(f"[bold cyan]you:[/bold cyan] {msg}")
         self._flog.info(f"Chat [{self._chat_target}]: {msg}")
 
@@ -757,9 +833,120 @@ class ReereeApp(App):
         # Add user message to history
         self._chat_messages.append({"role": "user", "content": msg})
 
-        # Launch async response
+        # Route to setup daemon or general chat
         import asyncio
-        asyncio.ensure_future(self._chat_respond(msg))
+        if self._chat_target == "setup":
+            asyncio.ensure_future(self._setup_respond(msg))
+        else:
+            asyncio.ensure_future(self._chat_respond(msg))
+
+    async def _setup_respond(self, user_msg: str) -> None:
+        """Handle setup conversation — configure reeree via natural language.
+
+        The setup daemon interprets the user's preferences, builds a Config,
+        and saves it. Responses include ```config blocks that get applied.
+        """
+        from ..llm import chat_async
+
+        self._chat_busy = True
+        setup_daemon = None
+
+        try:
+            import json as _json
+
+            system = (
+                "You are a setup daemon for reeree, a terminal-native LLM dispatch console.\n"
+                "Help the user configure their LLM provider, model, autonomy level, and context budget.\n\n"
+                "When the user tells you what they want, respond with:\n"
+                "1. A brief confirmation of what you understood\n"
+                "2. A ```config block with the JSON configuration\n\n"
+                "Config format:\n"
+                "```config\n"
+                '{"api_base": "https://api.together.xyz/v1", "model": "model-name", '
+                '"api_key": "key-or-empty", "autonomy": "medium", "max_context_tokens": 24000}\n'
+                "```\n\n"
+                "Valid autonomy levels:\n"
+                "  low — approve everything (safest)\n"
+                "  medium — auto-approve reads, ask about writes (default)\n"
+                "  high — auto-approve reads+writes, ask about shell commands\n"
+                "  full — auto-approve all (fastest)\n\n"
+                "Valid context budgets: 8000, 16000, 24000 (default), 32000\n\n"
+                "For multi-model routing (optional), include a models and routing section:\n"
+                "```config\n"
+                '{"api_base": "http://localhost:11434/v1", "model": "qwen3:8b", '
+                '"autonomy": "medium", "max_context_tokens": 24000,\n'
+                ' "models": {"local": {"model": "qwen3:8b", "api_base": "http://localhost:11434/v1"},\n'
+                '            "cloud": {"model": "Qwen/Qwen3-Coder", "api_base": "https://api.together.xyz/v1", '
+                '"api_key": "..."}},\n'
+                ' "routing": {"fast": "local", "coding": "local", "reasoning": "cloud"}}\n'
+                "```\n\n"
+                "Common setups:\n"
+                "- 'use ollama' → api_base: http://localhost:11434/v1, model: whatever they have\n"
+                "- 'use together.ai' → api_base: https://api.together.xyz/v1\n"
+                "- 'ollama for fast, together for reasoning' → multi-model routing\n\n"
+                "Rules:\n"
+                "- Be concise. This is configuration, not a tutorial.\n"
+                "- Always emit a ```config block when the user expresses a preference.\n"
+                "- Ask clarifying questions if the user's intent is ambiguous.\n"
+                "- If the user says 'done', they'll close the chat themselves.\n"
+                "- Don't say 'I think' or 'I suggest' — just describe the options.\n"
+            )
+
+            setup_daemon = self._daemon_registry.spawn(
+                DaemonKind.EXECUTOR, f"setup: {user_msg[:40]}",
+                scope="config",
+            )
+
+            response = await chat_async(
+                self._chat_messages, self.config, system=system,
+            )
+
+            self._chat_messages.append({"role": "assistant", "content": response})
+
+            # Extract and apply ```config blocks
+            import re
+            config_blocks = re.findall(r'```config\s*\n(.*?)```', response, re.DOTALL)
+            display_response = re.sub(r'```config\s*\n.*?```', '[config applied]', response, flags=re.DOTALL).strip()
+
+            if config_blocks:
+                for block in config_blocks:
+                    try:
+                        cfg_data = _json.loads(block.strip())
+                        # Apply to current config
+                        for key in ("api_base", "model", "api_key", "autonomy", "max_context_tokens"):
+                            if key in cfg_data:
+                                setattr(self.config, key, cfg_data[key])
+                        # Multi-model routing
+                        if "models" in cfg_data:
+                            self.config.models = cfg_data["models"]
+                        if "routing" in cfg_data:
+                            self.config.routing = cfg_data["routing"]
+                        # Save config
+                        self.config.save(self.project_dir / ".reeree" / "config.json")
+                        self._exec_write("[green]Config updated:[/green]")
+                        self._exec_write(f"  model: {self.config.model}")
+                        self._exec_write(f"  api: {self.config.api_base}")
+                        self._exec_write(f"  autonomy: {self.config.autonomy}")
+                        self._exec_write(f"  context: {self.config.max_context_tokens:,} tokens")
+                        if self.config.models:
+                            self._exec_write(f"  routing: {self.config.routing}")
+                        self._update_status()
+                    except (_json.JSONDecodeError, Exception) as e:
+                        self._exec_write(f"[red]Config parse error: {e}[/red]")
+
+            if display_response:
+                self._exec_write(f"[bold green]setup:[/bold green] {display_response}")
+
+        except Exception as e:
+            self._exec_write(f"[red]Setup error: {e}[/red]")
+            self._flog.error(f"Setup error: {e}")
+            if setup_daemon:
+                setup_daemon.status = DaemonStatus.FAILED
+                setup_daemon.error = str(e)
+        finally:
+            self._chat_busy = False
+            if setup_daemon and setup_daemon.is_active:
+                setup_daemon.status = DaemonStatus.DONE
 
     async def _chat_respond(self, user_msg: str) -> None:
         """Get LLM response with persistent context. Output goes to exec log.
