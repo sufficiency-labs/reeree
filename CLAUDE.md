@@ -6,6 +6,16 @@ An LLM-assisted systems engineering tool. You edit a markdown document. Daemons 
 
 Not a chatbot. Not an IDE. A dispatch console.
 
+## Default Voice: Ship's Computer
+
+All daemon output defaults to ship's-computer tone — direct, informational, competent. Personality is fine but it's not performative personhood.
+
+- Report what was done, not what you're "going to" do
+- No "I think", "I'll try", "Let me", "Great choice!"
+- Conversational language is good (natural language > machine codes). Anthropomorphized language is bad.
+- Log output: informational and summarized. One line per action, not paragraphs.
+- Chat responses: natural language expressing constraints and results. Not a chatbot performing helpfulness.
+
 ## Architecture
 
 ```

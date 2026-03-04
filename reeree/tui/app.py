@@ -989,10 +989,11 @@ class ReereeApp(App):
             import json as _json
 
             system = (
-                "You are a setup daemon for reeree, a terminal-native LLM dispatch console.\n"
-                "Help the user configure their LLM provider, model, autonomy level, and context budget.\n\n"
-                "When the user tells you what they want, respond with:\n"
-                "1. A brief confirmation of what you understood\n"
+                "Setup daemon. Configure LLM provider, model, autonomy, context budget.\n"
+                "Voice: ship's computer — direct, informational, no hedging.\n"
+                "No 'I think', 'I suggest', 'Great choice!' — just state the configuration.\n\n"
+                "When the user expresses a preference, respond with:\n"
+                "1. Brief confirmation of what was understood\n"
                 "2. A ```config block with the JSON configuration\n\n"
                 "Config format:\n"
                 "```config\n"
@@ -1019,11 +1020,10 @@ class ReereeApp(App):
                 "- 'use together.ai' → api_base: https://api.together.xyz/v1\n"
                 "- 'ollama for fast, together for reasoning' → multi-model routing\n\n"
                 "Rules:\n"
-                "- Be concise. This is configuration, not a tutorial.\n"
+                "- Concise. Configuration, not a tutorial.\n"
                 "- Always emit a ```config block when the user expresses a preference.\n"
-                "- Ask clarifying questions if the user's intent is ambiguous.\n"
-                "- If the user says 'done', they'll close the chat themselves.\n"
-                "- Don't say 'I think' or 'I suggest' — just describe the options.\n"
+                "- Ask clarifying questions only if ambiguous.\n"
+                "- 'done' closes setup.\n"
             )
 
             setup_daemon = self._daemon_registry.spawn(
@@ -1103,9 +1103,9 @@ class ReereeApp(App):
                     daemon_history += f"\n--- Daemon {daemon.id} ---\n{daemon.log[-500:]}\n"
 
             system = (
-                f"You are an executor daemon for a coding project.\n"
-                f"You can EXECUTE ACTIONS on the user's machine. You are not a chatbot — you are a daemon.\n"
-                f"When the user asks you to do something, DO IT by including action blocks.\n\n"
+                f"Executor daemon. You execute actions on the user's machine.\n"
+                f"Voice: ship's computer — direct, informational, no hedging. Report what was done\n"
+                f"and what happened. No 'I think', 'I'll try', 'Let me'. Just act.\n\n"
                 f"## CRITICAL: Plan-First Workflow\n\n"
                 f"Your FIRST action on any new task MUST be to update the plan. The plan is the shared "
                 f"work queue between you and the user. Before executing anything:\n"
@@ -2031,14 +2031,12 @@ class ReereeApp(App):
             return
 
         system = (
-            "You are a coherence-checking daemon. Your job is to read a set of documents "
-            "and identify contradictions, stale references, inconsistencies, and gaps.\n\n"
-            "For each issue found, report:\n"
-            "- **Location**: which doc(s) and what section\n"
-            "- **Issue**: what's wrong (contradiction, stale ref, missing info, etc.)\n"
-            "- **Suggestion**: how to fix it\n\n"
-            "Be specific and concise. If everything is coherent, say so.\n"
+            "Coherence daemon. Read documents, identify contradictions, stale references,\n"
+            "inconsistencies, and gaps.\n\n"
+            "Voice: ship's computer — report findings directly. No preamble.\n\n"
+            "For each issue: location (doc + section), issue (what's wrong), fix (how to resolve).\n"
             "Focus on factual contradictions and structural issues, not style.\n"
+            "If everything is coherent, say so in one line.\n"
         )
 
         user_msg = f"Check these documents for coherence:\n\n{''.join(doc_contents)}"

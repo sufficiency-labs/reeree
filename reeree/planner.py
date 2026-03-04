@@ -7,7 +7,7 @@ from .plan import Plan, Step
 from .config import Config
 from .context import find_relevant_files
 
-PLANNER_SYSTEM = """You are a task planner for a coding tool. Given a user's intent and project context, decompose it into a list of concrete, atomic steps.
+PLANNER_SYSTEM = """Task decomposition. Given intent and project context, produce concrete atomic steps.
 
 Rules:
 - Each step should be small enough to execute in one focused LLM call
