@@ -112,63 +112,79 @@ See [VALUES.md](VALUES.md) for the full values statement and [IMPLEMENTATION.md]
 
 ```
 # Terminal
-reeree                          # start or reattach session
-reeree "intent goes here"       # start with initial plan generation
-reeree attach [name]            # attach to running session
+reeree                          # start or resume session
+reeree "intent goes here"       # start with generated plan
+reeree --setup                  # launch setup wizard
 reeree ls                       # list sessions
-reeree kill [name]              # kill a session
+reeree kill                     # kill a session
 
 # Inside the document (command mode)
-:go                             # dispatch pending steps to daemons
+:go                             # dispatch next 2 pending steps
 :w                              # dispatch up to cursor / save
 :W                              # dispatch ALL pending steps
-:pause [N]                      # pause daemon(s)
-:kill [N]                       # kill daemon N
 :add "step description"         # add step to plan
 :del N                          # delete step N
 :move N M                       # move step N to position M
-:diff [N]                       # split: show diff from step N
-:log [N]                        # split: show daemon N's execution log
-:file <path>                    # split: show a file
-:shell                          # split: open bash
-:undo [N]                       # git revert step N
+:diff [N]                       # show diff for step N
+:log [N]                        # show daemon N's log
+:file <path>                    # show a file in exec log
+:undo                           # git revert last step
 :set autonomy low|medium|high   # approval level for writes
 :set model <name>               # change LLM model
-:cd <path>                      # change scope to subrepo
-:cd ..                          # return to parent scope
+:chat                           # toggle chat (executor daemon)
+:chat coherence                 # chat with coherence daemon
+:close                          # close chat panel
+:cd <path>                      # push scope to subrepo
+:cd ..                          # pop scope to parent
 :scope                          # show scope stack
-:cohere [path|glob]             # check document coherence
-:propagate                      # propagate changes through linked docs
-:q                              # detach (session keeps running)
-:q!                             # kill session and exit
+:cohere [path|glob]             # run coherence check
+:propagate                      # crawl cross-references
+:pause N                        # pause daemon N
+:resume N                       # resume paused daemon N
+:kill N                         # kill daemon N (and children)
+:setup                          # re-run setup wizard
+:q                              # quit (autosave)
+:q!                             # force quit (no save)
+:wq                             # save and quit
 ```
 
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────┐
-│                 reeree daemon                 │
-│           (Unix domain socket)               │
+│              reeree TUI (Textual)             │
+│  ┌─────────────────┬────────────────────┐    │
+│  │   Plan Editor    │  Daemon Tree       │    │
+│  │   (vim modal)    │  ● d1 step 3       │    │
+│  │                  │  ├── d2 coherence  │    │
+│  │                  │  └── d3 step 4     │    │
+│  │                  ├────────────────────┤    │
+│  │                  │  Exec Log          │    │
+│  │                  ├────────────────────┤    │
+│  │                  │  Chat Panel        │    │
+│  └─────────────────┴────────────────────┘    │
 │                                              │
 │  ┌────────────────────────────────────────┐  │
-│  │           Orchestrator                  │  │
-│  │  plan.md ←→ daemon pool ←→ git         │  │
+│  │         Daemon Registry                 │  │
+│  │  spawn / kill / pause / resume / tree  │  │
+│  └────────────┬───────────────────────────┘  │
+│               │                              │
+│  ┌────────────┴───────────────────────────┐  │
+│  │         Model Router                    │  │
+│  │  classify → tier → route to model      │  │
 │  └────────────┬───────────────────────────┘  │
 │               │                              │
 │  ┌────────┐ ┌────────┐ ┌────────┐           │
-│  │Daemon 1│ │Daemon 2│ │Daemon N│           │
-│  │(step 2)│ │(step 3)│ │ (idle) │           │
-│  └───┬────┘ └───┬────┘ └────────┘           │
-│      │          │                            │
-│  ┌───┴──────────┴──────────────┐             │
-│  │     LLM API (any model)     │             │
-│  └─────────────────────────────┘             │
-└──────────────┬───────────────────────────────┘
-               │ Unix domain socket
-┌──────────────┴───────────────────────────────┐
-│           reeree client (TUI)                │
-│  Textual app — document view + split panes   │
-│  Vim keybindings — attach/detach             │
+│  │Step    │ │Step    │ │Coherence│           │
+│  │Daemon 1│ │Daemon 2│ │Daemon 3 │           │
+│  │(multi- │ │(multi- │ │(check   │           │
+│  │ turn)  │ │ turn)  │ │ docs)   │           │
+│  └───┬────┘ └───┬────┘ └───┬────┘           │
+│      │          │           │                │
+│  ┌───┴──────────┴───────────┴──────────┐     │
+│  │     LLM API (model per tier)        │     │
+│  │  reasoning: big / coding: mid / fast │     │
+│  └─────────────────────────────────────┘     │
 └──────────────────────────────────────────────┘
 ```
 
@@ -199,26 +215,22 @@ Daemons are processes. Some are short-lived (execute a step and exit), some are 
 reeree/
 ├── README.md              # This file (project overview + dev guide)
 ├── pyproject.toml         # Package config
-├── reeree/                # Python package
-│   ├── __init__.py
+├── reeree/                # Python package (~3,650 lines)
 │   ├── cli.py             # Entry point — start/attach/ls/kill sessions
-│   ├── daemon.py          # Session daemon — Unix domain socket server
-│   ├── client.py          # TUI client — Textual app, attaches to daemon
-│   ├── tui/               # TUI components
-│   │   ├── app.py         # Main Textual application
-│   │   ├── plan_pane.py   # Plan view (left pane)
-│   │   ├── worker_pane.py # Daemon status view (right pane, stacked)
-│   │   ├── command_bar.py # Vim command bar (bottom)
-│   │   └── keybindings.py # Vim modal keybindings
-│   ├── orchestrator.py    # Plan management + daemon dispatch
-│   ├── worker.py          # Individual daemon — executes one step
-│   ├── planner.py         # Intent → step list decomposition
-│   ├── executor.py        # File edits, shell commands, git ops
+│   ├── config.py          # Configuration (single model + multi-model routing)
 │   ├── context.py         # Load focused context per step
-│   ├── llm.py             # LLM API interface (OpenAI-compatible)
-│   ├── plan.py            # Plan file read/write
-│   └── config.py          # Configuration
-├── tests/                 # Test suite
+│   ├── daemon_executor.py # Multi-turn step execution (read→edit→verify loop)
+│   ├── daemon_registry.py # Daemon lifecycle management (hierarchy, pause/kill)
+│   ├── executor.py        # File edits, shell commands, git ops, safety
+│   ├── llm.py             # LLM API interface (OpenAI-compatible, model overrides)
+│   ├── plan.py            # Plan/Step data model + markdown serialization
+│   ├── planner.py         # Intent → step list decomposition
+│   ├── router.py          # Model routing (reasoning/coding/fast tiers)
+│   └── tui/               # TUI components
+│       ├── app.py         # Main Textual application (vim modal, commands)
+│       ├── daemon_tree.py # Hierarchical daemon display widget
+│       └── setup_screen.py # First-run setup wizard ("character creation")
+├── tests/                 # Test suite (230 passing, 19 xfailed)
 ├── sandbox/               # Test project for development
 └── .gitignore
 ```
@@ -306,7 +318,7 @@ Built with [Values-Driven Systems Engineering](https://github.com/robbymeals/val
 
 ## Status
 
-Early development. Core modules exist. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
+Active development. 230 tests passing. Core dispatch loop, multi-turn daemons, daemon hierarchy, model routing, setup wizard, and TUI all working. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
 
 ---
 
