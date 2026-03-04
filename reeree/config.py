@@ -37,6 +37,16 @@ class Config:
     # Context settings
     max_context_tokens: int = 24000  # leave room in 32K window
 
+    # Multi-model routing (optional — falls back to single model above)
+    # models: {"fast": {"model": "...", "api_base": "...", "api_key": "..."}, ...}
+    models: dict = field(default_factory=dict)
+    # routing: {"reasoning": "model_key", "coding": "model_key", "fast": "model_key"}
+    routing: dict = field(default_factory=dict)
+
+    def is_first_run(self) -> bool:
+        """True if no config file exists or no API key configured."""
+        return not self.api_key and not self.models
+
     def __post_init__(self):
         if not self.api_key:
             self.api_key = _load_api_key()

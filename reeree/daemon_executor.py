@@ -13,9 +13,11 @@ from pathlib import Path
 from typing import Callable
 
 from .config import Config
+from .daemon_registry import DaemonKind
 from .plan import Step
 from .context import gather_context
 from .llm import chat_async
+from .router import route_model
 from .executor import run_shell, write_file, edit_file, git_commit, ExecResult
 
 
@@ -238,11 +240,20 @@ async def dispatch_step(
     last_summary = ""
     next_step_notes = []
 
+    # Route to best model for this task
+    choice = route_model(step.description, DaemonKind.STEP, config)
+    log(f"Model: {choice.model} (tier={choice.tier})")
+
     for turn in range(MAX_TURNS):
         log(f"LLM call (turn {turn + 1}/{MAX_TURNS})...")
 
         try:
-            response = await chat_async(messages, config, system=EXECUTOR_SYSTEM)
+            response = await chat_async(
+                messages, config, system=EXECUTOR_SYSTEM,
+                model_override=choice.model,
+                api_base_override=choice.api_base,
+                api_key_override=choice.api_key,
+            )
         except Exception as e:
             log(f"ERROR: {e}")
             return {"status": "failed", "error": str(e)}

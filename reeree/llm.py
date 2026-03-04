@@ -4,20 +4,26 @@ import httpx
 from .config import Config
 
 
-def chat(messages: list[dict], config: Config, system: str | None = None) -> str:
+def chat(messages: list[dict], config: Config, system: str | None = None,
+         model_override: str | None = None, api_base_override: str | None = None,
+         api_key_override: str | None = None) -> str:
     """Synchronous chat completion. Use chat_async in async contexts."""
     if system:
         messages = [{"role": "system", "content": system}] + messages
 
+    model = model_override or config.model
+    api_base = api_base_override or config.api_base
+    api_key = api_key_override or config.api_key
+
     resp = httpx.post(
-        f"{config.api_base}/chat/completions",
+        f"{api_base}/chat/completions",
         json={
-            "model": config.model,
+            "model": model,
             "messages": messages,
             "temperature": 0.2,
             "max_tokens": 4096,
         },
-        headers={"Authorization": f"Bearer {config.api_key}"},
+        headers={"Authorization": f"Bearer {api_key}"},
         timeout=300.0,
     )
     resp.raise_for_status()
@@ -25,7 +31,9 @@ def chat(messages: list[dict], config: Config, system: str | None = None) -> str
 
 
 async def chat_async(messages: list[dict], config: Config, system: str | None = None,
-                     on_token: callable = None) -> str:
+                     on_token: callable = None,
+                     model_override: str | None = None, api_base_override: str | None = None,
+                     api_key_override: str | None = None) -> str:
     """Async chat completion — non-blocking, for use inside TUI event loop.
 
     If on_token is provided, streams tokens and calls on_token(chunk_text) for each.
@@ -34,8 +42,12 @@ async def chat_async(messages: list[dict], config: Config, system: str | None = 
     if system:
         messages = [{"role": "system", "content": system}] + messages
 
+    model = model_override or config.model
+    api_base = api_base_override or config.api_base
+    api_key = api_key_override or config.api_key
+
     payload = {
-        "model": config.model,
+        "model": model,
         "messages": messages,
         "temperature": 0.2,
         "max_tokens": 4096,
@@ -47,9 +59,9 @@ async def chat_async(messages: list[dict], config: Config, system: str | None = 
         async with httpx.AsyncClient() as client:
             async with client.stream(
                 "POST",
-                f"{config.api_base}/chat/completions",
+                f"{api_base}/chat/completions",
                 json=payload,
-                headers={"Authorization": f"Bearer {config.api_key}"},
+                headers={"Authorization": f"Bearer {api_key}"},
                 timeout=300.0,
             ) as resp:
                 resp.raise_for_status()
@@ -73,9 +85,9 @@ async def chat_async(messages: list[dict], config: Config, system: str | None = 
     else:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{config.api_base}/chat/completions",
+                f"{api_base}/chat/completions",
                 json=payload,
-                headers={"Authorization": f"Bearer {config.api_key}"},
+                headers={"Authorization": f"Bearer {api_key}"},
                 timeout=300.0,
             )
             resp.raise_for_status()
