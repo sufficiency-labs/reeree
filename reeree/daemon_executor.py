@@ -333,8 +333,8 @@ async def dispatch_step(
                     "next_step_notes": next_step_notes}
         else:
             log(f"Commit failed: {commit_result.output}")
-            return {"status": "done", "commit_hash": None, "summary": last_summary,
-                    "next_step_notes": next_step_notes}
+            return {"status": "failed", "error": f"Commit failed: {commit_result.output}",
+                    "summary": last_summary, "next_step_notes": next_step_notes}
     else:
         failures = [r.output for r in all_results if not r.success]
         log(f"FAILED: {'; '.join(failures)}")
