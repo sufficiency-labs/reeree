@@ -24,3 +24,7 @@ If reeree ever generates revenue (sponsorship, consulting), sustainability targe
 - The dispatch console paradigm proves itself as an alternative to chatbot UX
 - The project demonstrates VDSE in practice — every decision traces to a value
 - It stays simple (< 5K lines) and maintainable by one person
+
+---
+
+> **Core Planning Documents:** [Values](VALUES.md) → [Implementation](IMPLEMENTATION.md) → [Plan](PROJECT_PLAN.md) → [POC](POC_PLAN.md) → [Cost](COST.md) → [Revenue](REVENUE.md) → **Profit**

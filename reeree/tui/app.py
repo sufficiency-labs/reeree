@@ -785,7 +785,7 @@ class ReereeApp(App):
 
             system = (
                 f"You are an executor daemon for a coding project.\n"
-                f"You can EXECUTE ACTIONS on the user's machine. You are not a chatbot — you are a worker.\n"
+                f"You can EXECUTE ACTIONS on the user's machine. You are not a chatbot — you are a daemon.\n"
                 f"When the user asks you to do something, DO IT by including action blocks.\n\n"
                 f"## Actions you can take\n\n"
                 f"Run shell commands:\n"

@@ -31,3 +31,7 @@ Not applicable — this is a tool project with zero infrastructure cost. Develop
 | reeree + ollama | $0 | Local models, free |
 | reeree + DeepSeek | $5-15 | Cloud API, cheap |
 | reeree + Claude API | $20-50 | Premium model, BYOK |
+
+---
+
+> **Core Planning Documents:** [Values](VALUES.md) → [Implementation](IMPLEMENTATION.md) → [Plan](PROJECT_PLAN.md) → [POC](POC_PLAN.md) → **Cost** → [Revenue](REVENUE.md) → [Profit](PROFIT.md)

@@ -1,13 +1,13 @@
 # Project Plan
 
 ## Current Phase
-Phase 1 — Core Loop. Get a single worker executing a single step from a plan, with the user watching.
+Phase 1 — Core Loop. Get a single daemon executing a single step from a plan, with the user watching.
 
 ---
 
-## Phase 1: Core Loop (The First Roomba)
-**Goal:** One roomba works. You can dispatch it, watch it, and undo its work.
-**Values tested:** Tool Not Agent, Plan Is the Interface, Git-Per-Step
+## Phase 1: Core Loop (First Daemon)
+**Goal:** One daemon executes. You can dispatch it, watch it, and undo its work.
+**Values tested:** [Delegated Agency](VALUES.md#1-delegated-agency), [Plan Is the Interface](VALUES.md#2-plan-is-the-interface), Git-Per-Step
 
 ### Deliverables
 1. Plan parser/writer with annotation support (DONE — `plan.py`)
@@ -15,7 +15,7 @@ Phase 1 — Core Loop. Get a single worker executing a single step from a plan, 
 3. Context builder — focused file loading per step (DONE — `context.py`)
 4. Executor — file edit, shell run, git commit (DONE — `executor.py`)
 5. Planner — intent → step list via LLM (DONE — `planner.py`)
-6. Single-worker orchestrator — pick step, gather context, call LLM, execute actions, commit
+6. Single-daemon orchestrator — pick step, gather context, call LLM, execute actions, commit
 7. Basic CLI — `reeree "intent"` → plan → approve → execute step by step
 8. Sandbox project for testing
 
@@ -32,12 +32,12 @@ Core modules exist. Need orchestrator + CLI integration.
 
 ## Phase 2: Persistence (The Daemon)
 **Goal:** Sessions survive terminal death. Attach/detach like tmux.
-**Values tested:** Persistence Without Fragility
+**Values tested:** [Persistence Without Fragility](VALUES.md#4-persistence-without-fragility)
 
 ### Deliverables
 1. Daemon process — background server with Unix domain socket
 2. Session management — create, list, attach, detach, kill
-3. Session state serialization — plan + worker status on disk
+3. Session state serialization — plan + daemon status on disk
 4. Client protocol — messages over socket (JSON or msgpack)
 5. Graceful crash recovery — daemon restarts, reads state from disk, resumes
 
@@ -51,28 +51,28 @@ Core modules exist. Need orchestrator + CLI integration.
 ---
 
 ## Phase 3: TUI (The Heads-Up Display)
-**Goal:** Multi-pane terminal interface with plan view, worker status, and command bar.
-**Values tested:** Plan Is the Interface, Overlap Not Turn-Taking
+**Goal:** Multi-pane terminal interface with plan view, daemon status, and command bar.
+**Values tested:** [Plan Is the Interface](VALUES.md#2-plan-is-the-interface), [Overlap Not Turn-Taking](VALUES.md#3-overlap-not-turn-taking)
 
 ### Deliverables
-1. Textual app with three-zone layout: plan (left), workers (right), command bar (bottom)
+1. Textual app with three-zone layout: plan (left), daemons (right), command bar (bottom)
 2. Plan pane — live-updating checklist, highlights active step
-3. Worker pane — shows current action, file being edited, diff preview
+3. Daemon pane — shows current action, file being edited, diff preview
 4. Command bar — vim command mode for `:go`, `:pause`, `:add`, etc.
-5. Live plan editing — add/delete/reorder steps while workers execute
+5. Live plan editing — add/delete/reorder steps while daemons execute
 6. Pane resizing and focus management
 
 ### Success Criteria
-- [ ] Can see plan and worker status simultaneously
-- [ ] Can add a step while a worker is executing another step
-- [ ] Worker pane updates in real time as actions complete
+- [ ] Can see plan and daemon status simultaneously
+- [ ] Can add a step while a daemon is executing another step
+- [ ] Daemon pane updates in real time as actions complete
 - [ ] Command bar accepts and executes all planned commands
 
 ---
 
 ## Phase 4: Vim Keybindings (Muscle Memory)
 **Goal:** Full modal interface — normal, insert, command modes.
-**Values tested:** Vim Is the Lingua Franca
+**Values tested:** [Vim Is the Lingua Franca](VALUES.md#5-vim-is-the-lingua-franca)
 
 ### Deliverables
 1. Normal mode — hjkl navigation in plan, J/K to reorder steps
@@ -90,35 +90,35 @@ Core modules exist. Need orchestrator + CLI integration.
 
 ---
 
-## Phase 5: Parallel Workers (The Fleet)
-**Goal:** Multiple roombas running simultaneously on independent steps.
-**Values tested:** Overlap Not Turn-Taking, Sufficiency Over Maximalism
+## Phase 5: Parallel Daemons (The Fleet)
+**Goal:** Multiple daemons running simultaneously on independent steps.
+**Values tested:** [Overlap Not Turn-Taking](VALUES.md#3-overlap-not-turn-taking), [Sufficiency Over Maximalism](VALUES.md#6-sufficiency-over-maximalism)
 
 ### Deliverables
-1. Worker pool — configurable number of concurrent workers (default: 2)
+1. Daemon pool — configurable number of concurrent daemons (default: 2)
 2. Dependency detection — steps that touch the same files run sequentially
-3. Worker pane stacking — multiple worker status views in right pane
-4. Per-worker controls — `:pause 2`, `:kill 1`, `:log 3`
+3. Daemon pane stacking — multiple daemon status views in right pane
+4. Per-daemon controls — `:pause 2`, `:kill 1`, `:log 3`
 5. Progress summary — `(3/7 done, 2 active, 2 pending)`
 
 ### Success Criteria
 - [ ] Two independent steps execute in parallel
 - [ ] Dependent steps (same files) wait correctly
-- [ ] Can pause one worker while others continue
-- [ ] Worker panes show independent status streams
+- [ ] Can pause one daemon while others continue
+- [ ] Daemon panes show independent status streams
 - [ ] Wall-clock time for independent steps ≈ time for longest single step
 
 ---
 
 ## Phase 6: Polish and Dogfood
 **Goal:** Use reeree to develop reeree. Fix everything that hurts.
-**Values tested:** All values, in practice.
+**Values tested:** [All values](VALUES.md), in practice.
 
 ### Deliverables
 1. Dogfood for 2 weeks on real projects
 2. Fix UX friction discovered during dogfooding
 3. Error recovery improvements (bad LLM output, network failures, git conflicts)
-4. Performance tuning (startup time, worker dispatch latency)
+4. Performance tuning (startup time, daemon dispatch latency)
 5. Documentation — usage guide, config reference
 
 ### Success Criteria
@@ -131,7 +131,7 @@ Core modules exist. Need orchestrator + CLI integration.
 
 ## Phase 7: Release
 **Goal:** Open source release.
-**Values tested:** No Lock-in, Sufficiency Over Maximalism
+**Values tested:** No Lock-in, [Sufficiency Over Maximalism](VALUES.md#6-sufficiency-over-maximalism)
 
 ### Deliverables
 1. License decision (likely MIT or Apache 2.0)
@@ -149,6 +149,10 @@ Core modules exist. Need orchestrator + CLI integration.
 
 ## MVP Definition
 
-The MVP is **Phase 1 + Phase 2 + Phase 3**: a single worker executing plan steps through a persistent TUI. This is the smallest thing that validates the core thesis: **dispatch console with visible plan beats chatbot with hidden state.**
+The MVP is **Phase 1 + Phase 2 + Phase 3**: a single daemon executing plan steps through a persistent TUI. This is the smallest thing that validates the core thesis: **dispatch console with visible plan beats chatbot with hidden state.**
 
-Phase 4-5 (vim bindings, parallel workers) are important but not required to test the thesis. Phase 6-7 (polish, release) come after validation.
+Phase 4-5 (vim bindings, parallel daemons) are important but not required to test the thesis. Phase 6-7 (polish, release) come after validation.
+
+---
+
+> **Core Planning Documents:** [Values](VALUES.md) → [Implementation](IMPLEMENTATION.md) → **Plan** → [POC](POC_PLAN.md) → [Cost](COST.md) → [Revenue](REVENUE.md) → [Profit](PROFIT.md)

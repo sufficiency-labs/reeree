@@ -82,7 +82,7 @@ class Plan:
 
     The plan is a markdown file that both the user and daemons read/write.
     The user is always editing ahead of the daemons: adding steps, annotating
-    future steps with specs, reordering priorities. Workers pick up steps,
+    future steps with specs, reordering priorities. Daemons pick up steps,
     read the annotations, execute, and mark done.
 
     This overlap — user planning ahead while daemons execute behind —
