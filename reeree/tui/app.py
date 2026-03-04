@@ -355,15 +355,61 @@ class ReereeApp(App):
                     yield Input(placeholder="chat with daemon (type 'exit' to close)", id="chat-input")
         yield StatusBar(id="status-bar")
 
+    # Default daemon types — always available
+    DAEMON_TYPES = {
+        "executor": {
+            "desc": "Executes plan steps — edits code, runs commands, commits",
+            "always_on": False,
+            "trigger": "dispatched (:w, :W, :go)",
+        },
+        "coherence": {
+            "desc": "Checks consistency across linked documents, flags conflicts",
+            "always_on": False,
+            "trigger": "triggered (:cohere, :propagate, on-save)",
+        },
+        "watcher": {
+            "desc": "Monitors project for changes, runs tests, reports breakage",
+            "always_on": True,
+            "trigger": "file changes in project",
+        },
+    }
+
     def on_mount(self) -> None:
         self.query_one("#plan-editor", PlanEditor).focus()
         self._update_status()
-        # Show initial state in exec log
+
+        # Startup info
         exec_log = self.query_one("#exec-log", RichLog)
         exec_log.write(f"[bold]reeree[/bold] — {self.plan.intent or 'no plan'}")
-        exec_log.write(f"[dim]{self.config.model} via {self.config.api_base}[/dim]")
-        exec_log.write(f"[dim]{len(self.plan.steps)} steps  |  :go to dispatch  |  :help for commands[/dim]")
+        exec_log.write(f"[dim]project: {self.project_dir}[/dim]")
         exec_log.write("")
+
+        # Model info
+        model_short = self.config.model.split("/")[-1] if "/" in self.config.model else self.config.model
+        exec_log.write(f"  [bold]model:[/bold]    {model_short}")
+        exec_log.write(f"  [bold]api:[/bold]      {self.config.api_base}")
+        exec_log.write(f"  [bold]autonomy:[/bold] {self.config.autonomy}")
+        exec_log.write(f"  [bold]context:[/bold]  {self.config.max_context_tokens:,} tokens")
+        exec_log.write("")
+
+        # Daemon types
+        exec_log.write(f"  [bold]daemons:[/bold]")
+        for name, info in self.DAEMON_TYPES.items():
+            on_tag = "[green]always-on[/green]" if info["always_on"] else f"[dim]{info['trigger']}[/dim]"
+            exec_log.write(f"    {name:12s} {info['desc']}")
+            exec_log.write(f"    {'':12s} {on_tag}")
+        exec_log.write("")
+
+        # Plan summary
+        if self.plan.steps:
+            done, total = self.plan.progress
+            exec_log.write(f"  [bold]plan:[/bold] {done}/{total} steps  |  :w to dispatch  |  :help for commands")
+        else:
+            exec_log.write(f"  [dim]no plan — type i to start writing, or :chat to talk to executor[/dim]")
+        exec_log.write("")
+
+        # Start heartbeat timer for always-on daemons
+        self._heartbeat_timer = self.set_interval(120, self._daemon_heartbeat)
 
     def _update_status(self) -> None:
         status = self.query_one("#status-bar", StatusBar)
@@ -653,6 +699,27 @@ class ReereeApp(App):
     def _toggle_chat_off(self) -> None:
         self.query_one("#chat-panel").remove_class("visible")
 
+    async def _daemon_heartbeat(self) -> None:
+        """Periodic heartbeat — always-on daemons check for work.
+
+        Runs every 2 minutes. Checks:
+        - Are there pending coherence tasks?
+        - Did any watched files change?
+        - Are any active daemons stalled?
+        """
+        active = sum(1 for d in self._daemons.values() if d.get("status") == "active")
+        if active > 0:
+            self._flog.debug(f"Heartbeat: {active} active daemons")
+
+        # Check for stalled daemons (no log output in 5+ min)
+        now = time.monotonic()
+        for did, dinfo in self._daemons.items():
+            if dinfo.get("status") == "active":
+                last = dinfo.get("last_log_time", now)
+                if now - last > 300:  # 5 min silence
+                    self._exec_write(f"[yellow]⚠ d{did} hasn't reported in {int(now - last)}s[/yellow]")
+                    self._flog.warning(f"Daemon {did} stalled — {int(now - last)}s since last output")
+
     @on(events.Key)
     def on_chat_escape(self, event: events.Key) -> None:
         """Escape from chat input returns focus to plan editor."""
@@ -740,14 +807,28 @@ class ReereeApp(App):
                 f"- [x] Step 1: Done thing\n"
                 f"- [ ] Step 2: Next thing\n"
                 f"```\n\n"
+                f"Read a file:\n"
+                f"```read:path/to/file.py\n"
+                f"```\n\n"
+                f"Search for files or content:\n"
+                f"```search\n"
+                f"pattern: TODO|FIXME\n"
+                f"glob: *.py\n"
+                f"```\n\n"
+                f"List directory:\n"
+                f"```ls:path/to/dir\n"
+                f"```\n\n"
                 f"You can include MULTIPLE action blocks in one response. They execute in order.\n"
-                f"After actions execute, the results will be shown to you.\n\n"
+                f"After actions execute, you'll see results and can take follow-up actions.\n"
+                f"This is a MULTI-TURN loop — up to 5 rounds of action→result→action.\n"
+                f"ALWAYS read files before editing them. ALWAYS check git status before committing.\n\n"
                 f"## Rules\n"
                 f"- Be concise. Do the thing, don't describe doing it.\n"
                 f"- If asked to run something, include a ```shell block. Don't say 'you can run...'.\n"
-                f"- If asked to edit code, include a ```write or ```edit block.\n"
+                f"- If asked to edit code, read the file first, then ```edit or ```write.\n"
                 f"- If asked to update the plan, include a ```plan block.\n"
-                f"- Git commit after meaningful changes: ```shell\\ngit add -A && git commit -m 'msg'\\n```\n\n"
+                f"- Git commit after meaningful changes: ```shell\\ngit add -A && git commit -m 'msg'\\n```\n"
+                f"- When done with all actions, say DONE (no more action blocks).\n\n"
                 f"Project context:\n{context[:8000]}\n\n"
                 f"Current plan:\n{plan_md}\n\n"
             )
@@ -765,22 +846,34 @@ class ReereeApp(App):
             if daemon_history:
                 system += f"Recent execution:\n{daemon_history[:2000]}\n"
 
-            response = await chat_async(self._chat_messages, self.config, system=system)
+            # Multi-turn action loop — up to 5 rounds of LLM → actions → results → LLM
+            max_turns = 5
+            for turn in range(max_turns):
+                response = await chat_async(self._chat_messages, self.config, system=system)
 
-            # Add response to history
-            self._chat_messages.append({"role": "assistant", "content": response})
+                # Add response to history
+                self._chat_messages.append({"role": "assistant", "content": response})
 
-            # Execute action blocks and update plan
-            display_response, action_results = await self._execute_actions_from_response(response)
+                # Execute action blocks
+                display_response, action_results = await self._execute_actions_from_response(response)
 
-            # Display in exec log
-            if display_response.strip():
-                self._exec_write(f"[bold green]{self._chat_target}:[/bold green] {display_response}")
+                # Display in exec log
+                if display_response.strip():
+                    self._exec_write(f"[bold green]{self._chat_target}:[/bold green] {display_response}")
 
-            # If there were action results, add them to chat history so LLM sees outcomes
-            if action_results:
+                # If no actions were taken, we're done
+                if not action_results:
+                    break
+
+                # Feed results back to LLM for follow-up
                 results_msg = "\n".join(action_results)
                 self._chat_messages.append({"role": "user", "content": f"[Action results]\n{results_msg}"})
+
+                # If LLM said DONE or no more action blocks expected, stop
+                if "DONE" in response.upper().split("```")[-1]:
+                    break
+
+                self._flog.info(f"Chat turn {turn + 1}/{max_turns} — {len(action_results)} actions executed")
 
             # Keep message history manageable
             if len(self._chat_messages) > 40:
@@ -795,18 +888,19 @@ class ReereeApp(App):
     async def _execute_actions_from_response(self, response: str) -> tuple[str, list[str]]:
         """Parse and execute action blocks from LLM response.
 
-        Handles: ```shell, ```write:path, ```edit:path, ```plan
+        Handles: ```shell, ```write:path, ```edit:path, ```read:path, ```search, ```ls:path, ```plan
         Returns (display_text, action_results).
         """
         import re
-        from ..executor import run_shell, write_file, edit_file, check_autonomy
+        import glob as globmod
+        from ..executor import run_shell, write_file, edit_file, check_autonomy, check_path_containment
 
         display = response
         results = []
 
         # Find all fenced code blocks with language tags
         blocks = list(re.finditer(
-            r'```(shell|write:([^\n]+)|edit:([^\n]+)|plan)\n(.*?)```',
+            r'```(shell|write:([^\n]+)|edit:([^\n]+)|read:([^\n]+)|search|ls:([^\n]*)|plan)\n(.*?)```',
             response, re.DOTALL
         ))
 
@@ -814,11 +908,10 @@ class ReereeApp(App):
             return display, results
 
         for block in blocks:
-            lang = block.group(1)
-            content = block.group(4).strip()
+            tag = block.group(1)  # full tag like "shell", "write:foo.py", "read:bar.py"
+            content = block.group(6).strip()  # body of the block
 
-            if lang == "shell":
-                # Execute shell command
+            if tag == "shell":
                 ok, reason = check_autonomy(content, self.config.autonomy)
                 if not ok:
                     self._exec_write(f"[red]Blocked: {reason}[/red]")
@@ -827,7 +920,6 @@ class ReereeApp(App):
                 self._exec_write(f"[dim]$ {content}[/dim]")
                 result = run_shell(content, self.project_dir, autonomy=self.config.autonomy)
                 if result.output:
-                    # Truncate long output for display but keep full in log
                     display_output = result.output[:2000]
                     if len(result.output) > 2000:
                         display_output += f"\n... ({len(result.output)} chars total)"
@@ -835,8 +927,8 @@ class ReereeApp(App):
                 self._flog.info(f"Shell: {content} → {'ok' if result.success else 'fail'}")
                 results.append(f"$ {content}\n{result.output[:4000]}")
 
-            elif lang.startswith("write:"):
-                filepath = block.group(2).strip()
+            elif tag.startswith("write:"):
+                filepath = tag[6:].strip()
                 full_path = self.project_dir / filepath
                 result = write_file(full_path, content + "\n", project_dir=self.project_dir)
                 if result.success:
@@ -846,10 +938,9 @@ class ReereeApp(App):
                 self._flog.info(f"Write: {filepath} → {'ok' if result.success else 'fail'}")
                 results.append(f"write {filepath}: {'ok' if result.success else result.output}")
 
-            elif lang.startswith("edit:"):
-                filepath = block.group(3).strip()
+            elif tag.startswith("edit:"):
+                filepath = tag[5:].strip()
                 full_path = self.project_dir / filepath
-                # Parse <<<old>>> <<<new>>> format
                 edit_match = re.match(r'<<<(.+?)>>>\s*<<<(.+?)>>>', content, re.DOTALL)
                 if edit_match:
                     old_text, new_text = edit_match.group(1), edit_match.group(2)
@@ -864,14 +955,80 @@ class ReereeApp(App):
                     self._exec_write(f"[yellow]Edit parse error for {filepath}[/yellow]")
                     results.append(f"edit {filepath}: parse error — expected <<<old>>> <<<new>>>")
 
-            elif lang == "plan":
+            elif tag.startswith("read:"):
+                filepath = tag[5:].strip()
+                full_path = self.project_dir / filepath
+                ok, reason = check_path_containment(full_path, self.project_dir)
+                if not ok:
+                    results.append(f"read {filepath}: {reason}")
+                    continue
+                if full_path.exists() and full_path.is_file():
+                    file_content = full_path.read_text()
+                    # Truncate for display, full for LLM
+                    if len(file_content) > 1000:
+                        self._exec_write(f"[dim]Read {filepath} ({len(file_content)} chars)[/dim]")
+                    else:
+                        self._exec_write(f"[dim]Read {filepath}[/dim]")
+                    self._flog.info(f"Read: {filepath} ({len(file_content)} chars)")
+                    results.append(f"=== {filepath} ===\n{file_content[:8000]}")
+                else:
+                    self._exec_write(f"[yellow]File not found: {filepath}[/yellow]")
+                    results.append(f"read {filepath}: file not found")
+
+            elif tag == "search":
+                # Parse search params from content
+                search_pattern = ""
+                search_glob = "*.py"
+                for line in content.split("\n"):
+                    if line.startswith("pattern:"):
+                        search_pattern = line[8:].strip()
+                    elif line.startswith("glob:"):
+                        search_glob = line[5:].strip()
+                if search_pattern:
+                    import subprocess
+                    try:
+                        cmd = f"grep -rn '{search_pattern}' --include='{search_glob}' ."
+                        proc = subprocess.run(
+                            cmd, shell=True, capture_output=True, text=True,
+                            cwd=self.project_dir, timeout=10
+                        )
+                        output = proc.stdout[:4000] or "No matches"
+                        self._exec_write(f"[dim]Search: {search_pattern} in {search_glob}[/dim]")
+                        self._flog.info(f"Search: {search_pattern} → {len(proc.stdout)} chars")
+                        results.append(f"search '{search_pattern}' in {search_glob}:\n{output}")
+                    except Exception as e:
+                        results.append(f"search error: {e}")
+                else:
+                    # Just list files matching glob
+                    import subprocess
+                    proc = subprocess.run(
+                        f"find . -name '{search_glob}' -not -path './.git/*' | head -50",
+                        shell=True, capture_output=True, text=True,
+                        cwd=self.project_dir, timeout=10
+                    )
+                    results.append(f"files matching {search_glob}:\n{proc.stdout[:4000]}")
+
+            elif tag.startswith("ls:"):
+                dirpath = tag[3:].strip() or "."
+                full_dir = self.project_dir / dirpath
+                if full_dir.exists() and full_dir.is_dir():
+                    import subprocess
+                    proc = subprocess.run(
+                        ["ls", "-la"], capture_output=True, text=True, cwd=full_dir
+                    )
+                    self._exec_write(f"[dim]ls {dirpath}[/dim]")
+                    results.append(f"ls {dirpath}:\n{proc.stdout[:4000]}")
+                else:
+                    results.append(f"ls {dirpath}: not found")
+
+            elif tag == "plan":
                 self._apply_plan_from_response(response)
                 results.append("plan updated")
 
         # Strip action blocks from display text
         display = re.sub(
-            r'```(shell|write:[^\n]+|edit:[^\n]+|plan)\n.*?```',
-            lambda m: f'[dim][{m.group(1).split(":")[0]} executed][/dim]',
+            r'```(shell|write:[^\n]+|edit:[^\n]+|read:[^\n]+|search|ls:[^\n]*|plan)\n.*?```',
+            lambda m: f'[dim][{m.group(1).split(":")[0]}][/dim]',
             display, flags=re.DOTALL
         )
 
@@ -1279,6 +1436,7 @@ class ReereeApp(App):
     def _daemon_log(self, daemon_id: int, message: str) -> None:
         if daemon_id in self._daemons:
             self._daemons[daemon_id]["log"] += message + "\n"
+            self._daemons[daemon_id]["last_log_time"] = time.monotonic()
             # Show scope tag if daemon is from a different scope than current
             scope = self._daemons[daemon_id].get("scope", "")
             if scope and scope != self.project_dir.name:
