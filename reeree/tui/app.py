@@ -243,6 +243,10 @@ class ReereeApp(App):
         self._flog.info(f"Project: {project_dir}")
         self._flog.info(f"Model: {config.model}")
         self._flog.info(f"Plan: {len(self.plan.steps)} steps — {self.plan.intent!r}")
+        # Chat state — persistent message history with the executor daemon
+        self._chat_messages: list[dict] = []
+        self._chat_target = "executor"  # which daemon type we're chatting with
+        self._chat_busy = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -363,7 +367,7 @@ class ReereeApp(App):
         elif command == "cohere":
             await self._cohere(args)
         elif command == "chat":
-            self._toggle_chat()
+            self._toggle_chat(args)
         elif command == "close":
             self._toggle_chat_off()
         elif command == "pause":
@@ -394,17 +398,30 @@ class ReereeApp(App):
             "  :file path       View a file in log\n"
             "  :undo            Revert last step\n"
             "  :set key value   Set config (model, autonomy)\n"
-            "  :chat            Toggle chat panel\n"
+            "  :chat            Toggle chat (executor daemon)\n"
+            "  :chat coherence  Chat with coherence daemon\n"
+            "  :chat state      Chat with state daemon\n"
             "  :w / :q / :wq    Save / quit / both\n"
             "  :help            This help\n"
         )
 
-    def _toggle_chat(self) -> None:
+    def _toggle_chat(self, target: str = "") -> None:
         panel = self.query_one("#chat-panel")
-        if panel.has_class("visible"):
+        if target:
+            self._chat_target = target
+            self._chat_messages = []  # Fresh context for new target
+            chat_log = self.query_one("#chat-log", RichLog)
+            chat_log.clear()
+            chat_log.write(f"[bold]Chat: {target} daemon[/bold]")
+            panel.add_class("visible")
+            self.query_one("#chat-input", Input).focus()
+        elif panel.has_class("visible"):
             panel.remove_class("visible")
         else:
             panel.add_class("visible")
+            chat_log = self.query_one("#chat-log", RichLog)
+            if not self._chat_messages:
+                chat_log.write(f"[bold]Chat: {self._chat_target} daemon[/bold]")
             self.query_one("#chat-input", Input).focus()
 
     def _toggle_chat_off(self) -> None:
@@ -412,16 +429,77 @@ class ReereeApp(App):
 
     @on(Input.Submitted, "#chat-input")
     def on_chat_submit(self, event: Input.Submitted) -> None:
-        """Handle chat input submission."""
+        """Handle chat input — send to executor daemon with full context."""
         msg = event.value.strip()
         if not msg:
             return
         event.input.value = ""
         chat_log = self.query_one("#chat-log", RichLog)
         chat_log.write(f"[bold]>[/bold] {msg}")
-        self._flog.info(f"Chat: {msg}")
-        # TODO: send to LLM and stream response back
-        chat_log.write("[dim]Chat responses not yet implemented — use plan annotations for now.[/dim]")
+        self._flog.info(f"Chat [{self._chat_target}]: {msg}")
+
+        if self._chat_busy:
+            chat_log.write("[dim]Waiting for previous response...[/dim]")
+            return
+
+        # Add user message to history
+        self._chat_messages.append({"role": "user", "content": msg})
+
+        # Launch async response
+        import asyncio
+        asyncio.ensure_future(self._chat_respond(msg))
+
+    async def _chat_respond(self, user_msg: str) -> None:
+        """Get LLM response with persistent context."""
+        from ..llm import chat_async
+        from ..context import gather_context
+        from ..plan import Step
+
+        self._chat_busy = True
+        chat_log = self.query_one("#chat-log", RichLog)
+
+        try:
+            # Build system prompt with project context
+            dummy_step = Step(description=user_msg)
+            context = gather_context(dummy_step, self.project_dir, self.config.max_context_tokens * 4)
+            plan_md = self.plan.to_markdown()
+
+            # Daemon execution history
+            daemon_history = ""
+            for did, dinfo in self._daemons.items():
+                if dinfo.get("log"):
+                    daemon_history += f"\n--- Daemon {did} ---\n{dinfo['log'][-500:]}\n"
+
+            system = (
+                f"You are an executor daemon for a coding project.\n"
+                f"You have direct access to the project files and execution history.\n"
+                f"Answer questions about the code, suggest fixes, explain what happened.\n"
+                f"If the user asks you to do something, describe what you would change.\n"
+                f"Be concise and direct.\n\n"
+                f"Project context:\n{context[:8000]}\n\n"
+                f"Current plan:\n{plan_md}\n\n"
+            )
+            if daemon_history:
+                system += f"Recent execution:\n{daemon_history[:2000]}\n"
+
+            response = await chat_async(self._chat_messages, self.config, system=system)
+
+            # Add response to history
+            self._chat_messages.append({"role": "assistant", "content": response})
+
+            # Display
+            chat_log.write(f"\n{response}\n")
+            self._flog.info(f"Chat response: {response[:200]}")
+
+            # Keep message history manageable (last 20 turns)
+            if len(self._chat_messages) > 40:
+                self._chat_messages = self._chat_messages[-40:]
+
+        except Exception as e:
+            chat_log.write(f"[red]Error: {e}[/red]")
+            self._flog.error(f"Chat error: {e}")
+        finally:
+            self._chat_busy = False
 
     def _save_plan(self) -> None:
         editor = self.query_one("#plan-editor", PlanEditor)
