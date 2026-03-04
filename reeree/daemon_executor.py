@@ -150,23 +150,27 @@ async def dispatch_step(
                 log(f"> read {action['path']} — NOT FOUND")
 
         elif action_type == "shell":
-            log(f"> $ {action['command']}")
-            result = run_shell(action["command"], project_dir)
+            from .executor import classify_command
+            classification = classify_command(action["command"])
+            log(f"> $ {action['command']}  [{classification}]")
+            result = run_shell(action["command"], project_dir, autonomy=config.autonomy)
             if result.output:
                 log(f"  {result.output[:200]}")
+            if not result.success and "BLOCKED" in result.output:
+                log(f"  BLOCKED by safety guardrails")
             results.append(result)
 
         elif action_type == "write":
             path = project_dir / action["path"]
             content = action.get("content", "")
             log(f"> write {action['path']} ({len(content)} chars)")
-            result = write_file(path, content)
+            result = write_file(path, content, project_dir=project_dir)
             results.append(result)
 
         elif action_type == "edit":
             path = project_dir / action["path"]
             log(f"> edit {action['path']}")
-            result = edit_file(path, action["old"], action["new"])
+            result = edit_file(path, action["old"], action["new"], project_dir=project_dir)
             results.append(result)
             if not result.success:
                 log(f"  FAILED: {result.output}")
