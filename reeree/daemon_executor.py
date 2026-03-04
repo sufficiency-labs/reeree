@@ -11,38 +11,43 @@ from .llm import chat, chat_async
 from .executor import run_shell, write_file, edit_file, git_commit
 
 
-EXECUTOR_SYSTEM = """You execute ONE step of a coding plan.
+EXECUTOR_SYSTEM = """You are a daemon that EXECUTES one step of a coding plan.
+
+You MUST actually make changes — write files, edit code, run commands.
+DO NOT just read files and call it done. Reading is preparation, not execution.
+If the step says "add X to file.py", you MUST include a write or edit action that adds X.
 
 RESPOND WITH VALID YAML ONLY. No markdown, no explanation, no text outside the YAML.
 
-Format:
+Action types:
 ```yaml
 actions:
-  - type: read
+  - type: read          # Read a file (for understanding before editing)
     path: file.py
-  - type: shell
-    command: "ls -la"
-  - type: write
+  - type: shell         # Run a shell command
+    command: "pytest tests/ -v"
+  - type: write         # Write/create a file (full content)
     path: file.py
     content: |
       full file content here
-  - type: edit
+  - type: edit          # Edit part of a file (search and replace)
     path: file.py
     old: "exact old text"
     new: "new text"
 summary: "one sentence describing what was done"
-next_step_notes:
-  - "observation or suggestion relevant to the next step in the plan"
-  - "e.g. 'tests pass but coverage is low on edge cases'"
+next_step_notes:       # OPTIONAL — pass observations to the next step
+  - "e.g. 'found config uses YAML not JSON'"
 ```
 
-IMPORTANT:
-- Use YAML block scalars (|) for multi-line content
-- Do EXACTLY what the step says, nothing more
-- ONLY output the YAML, nothing else
-- You may wrap the YAML in ```yaml fences if you prefer
-- next_step_notes is OPTIONAL — include it when you discovered something during execution
-  that would help the next step (findings, warnings, suggestions, file paths discovered)"""
+RULES:
+- You MUST include at least one write, edit, or shell action. Read-only responses are WRONG.
+- A typical step: read the relevant file(s), then edit or write the changes.
+- Use edit (old/new) for surgical changes to existing files.
+- Use write (full content) for new files or full rewrites.
+- Use shell for running tests, installing packages, etc.
+- Use YAML block scalars (|) for multi-line content in write actions.
+- You may wrap the YAML in ```yaml fences if you prefer.
+- Output ONLY the YAML, nothing else."""
 
 
 def _parse_llm_response(text: str) -> dict | None:
@@ -137,7 +142,7 @@ async def dispatch_step(
     if step.done_criteria:
         prompt_parts.append(f"Acceptance criteria: {step.done_criteria}")
 
-    prompt_parts.append("\nExecute. Respond with JSON actions.")
+    prompt_parts.append("\nExecute this step NOW. Respond with YAML actions including at least one write, edit, or shell action.")
 
     messages = [{"role": "user", "content": "\n\n".join(prompt_parts)}]
 
@@ -198,8 +203,21 @@ async def dispatch_step(
             if not result.success:
                 log(f"  FAILED: {result.output}")
 
+    # Check if any actual changes were made (not just reads)
+    has_mutations = any(
+        action.get("type") in ("write", "edit", "shell")
+        for action in actions
+    )
+    if not has_mutations:
+        log("WARNING: daemon only read files, made no changes")
+
     # Results
     all_ok = all(r.success for r in results) if results else True
+
+    if not has_mutations:
+        # Read-only response — report as incomplete, don't create empty commit
+        return {"status": "failed", "error": "Daemon only read files, made no changes",
+                "next_step_notes": next_step_notes}
 
     if all_ok:
         commit_result = git_commit(f"reeree: {step.description}", project_dir)
