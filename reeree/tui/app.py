@@ -15,52 +15,7 @@ from textual import events, on
 from ..config import Config
 from ..daemon_registry import DaemonRegistry, DaemonKind, DaemonStatus
 from ..plan import Plan
-
-
-class DaemonProgress(Static):
-    """Live progress indicator for an active daemon.
-
-    Updates in-place: spinner + daemon ID + step + elapsed time.
-    Mounted into the progress container, removed when daemon completes.
-    """
-
-    SPINNERS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-
-    def __init__(self, daemon_id: int, step_desc: str, scope: str = "", **kwargs):
-        super().__init__(**kwargs)
-        self.daemon_id = daemon_id
-        self.step_desc = step_desc
-        self.scope = scope
-        self._start_time = time.monotonic()
-        self._frame = 0
-        self._phase = "starting"
-        self._detail = ""
-
-    def on_mount(self) -> None:
-        self._timer = self.set_interval(1 / 8, self._tick)
-
-    def _tick(self) -> None:
-        self._frame += 1
-        elapsed = time.monotonic() - self._start_time
-        spinner = self.SPINNERS[self._frame % len(self.SPINNERS)]
-        mins, secs = divmod(int(elapsed), 60)
-        time_str = f"{mins}:{secs:02d}" if mins else f"{secs}s"
-        scope_tag = f":{self.scope}" if self.scope else ""
-        detail = f"  {self._detail}" if self._detail else ""
-        self.update(
-            f"  [cyan]{spinner}[/cyan] [bold]d{self.daemon_id}{scope_tag}[/bold] "
-            f"{self.step_desc}  [dim]{self._phase} {time_str}{detail}[/dim]"
-        )
-
-    def set_phase(self, phase: str, detail: str = "") -> None:
-        """Update what the daemon is doing: 'reading context', 'calling LLM', 'editing files'..."""
-        self._phase = phase
-        self._detail = detail
-
-    def finish(self) -> float:
-        """Stop the timer, return elapsed seconds."""
-        self._timer.stop()
-        return time.monotonic() - self._start_time
+from .daemon_tree import DaemonTreeView
 
 
 def _setup_file_logger(project_dir: Path) -> logging.Logger:
@@ -291,7 +246,7 @@ class ReereeApp(App):
     #right-panel {
         width: 60%;
     }
-    #daemon-progress {
+    #daemon-tree {
         height: auto;
         max-height: 8;
         border-left: solid $primary;
@@ -349,7 +304,7 @@ class ReereeApp(App):
         with Horizontal(id="main-layout"):
             yield PlanEditor(self.plan, id="plan-editor")
             with Vertical(id="right-panel"):
-                yield Vertical(id="daemon-progress")
+                yield DaemonTreeView(self._daemon_registry, id="daemon-tree")
                 yield RichLog(id="exec-log", highlight=True, markup=True, wrap=True)
                 with Vertical(id="chat-panel"):
                     yield Input(placeholder="chat with daemon (type 'exit' to close)", id="chat-input")
@@ -867,42 +822,17 @@ class ReereeApp(App):
 
             # Multi-turn action loop — up to 5 rounds of LLM → actions → results → LLM
             max_turns = 5
+            chat_daemon = self._daemon_registry.spawn(
+                DaemonKind.EXECUTOR, user_msg[:50],
+                scope=str(self.project_dir.name),
+            )
             for turn in range(max_turns):
-                # Show thinking indicator
-                progress = DaemonProgress(
-                    daemon_id=f"chat",
-                    step_desc=f"turn {turn + 1}" if turn > 0 else user_msg[:50],
-                    scope=str(self.project_dir.name),
-                )
-                container = self.query_one("#daemon-progress")
-                container.mount(progress)
-
-                # Stream tokens so user can see the response forming
-                token_buffer = []
-                def on_token(text):
-                    token_buffer.append(text)
-                    # Update progress phase based on content so far
-                    current = "".join(token_buffer)
-                    if "```plan" in current:
-                        progress.set_phase("planning")
-                    elif "```shell" in current:
-                        progress.set_phase("executing")
-                    elif "```edit" in current or "```write" in current:
-                        progress.set_phase("editing")
-                    elif "```read" in current:
-                        progress.set_phase("reading")
-                    else:
-                        progress.set_phase("thinking")
-
                 try:
                     response = await chat_async(
                         self._chat_messages, self.config, system=system,
-                        on_token=on_token,
                     )
                 finally:
-                    elapsed = progress.finish()
-                    progress.remove()
-                    self._exec_write(f"[dim]turn {turn + 1}: {elapsed:.1f}s[/dim]")
+                    self._exec_write(f"[dim]turn {turn + 1}: {chat_daemon.elapsed_str}[/dim]")
 
                 # Add response to history
                 self._chat_messages.append({"role": "assistant", "content": response})
@@ -935,8 +865,13 @@ class ReereeApp(App):
         except Exception as e:
             self._exec_write(f"[red]Chat error: {e}[/red]")
             self._flog.error(f"Chat error: {e}")
+            if chat_daemon:
+                chat_daemon.status = DaemonStatus.FAILED
+                chat_daemon.error = str(e)
         finally:
             self._chat_busy = False
+            if chat_daemon and chat_daemon.is_active:
+                chat_daemon.status = DaemonStatus.DONE
 
     async def _execute_actions_from_response(self, response: str) -> tuple[str, list[str]]:
         """Parse and execute action blocks from LLM response.
@@ -1501,36 +1436,10 @@ class ReereeApp(App):
     async def _run_daemon_task(self, daemon_id: int, step, step_index: int) -> None:
         from ..daemon_executor import dispatch_step
 
-        # Mount progress widget
         daemon = self._daemon_registry.get(daemon_id)
-        scope = daemon.scope if daemon else ""
-        progress = DaemonProgress(
-            daemon_id, step.description, scope=scope,
-            id=f"dp-{daemon_id}",
-        )
-        progress_container = self.query_one("#daemon-progress")
-        await progress_container.mount(progress)
 
         def on_log(msg, did=daemon_id):
             self._daemon_log(did, msg)
-            # Update progress phase from log messages
-            try:
-                pw = self.query_one(f"#dp-{did}", DaemonProgress)
-                msg_lower = msg.lower()
-                if "context" in msg_lower or "reading" in msg_lower:
-                    pw.set_phase("reading")
-                elif "llm" in msg_lower or "calling" in msg_lower or "api" in msg_lower:
-                    pw.set_phase("thinking")
-                elif "edit" in msg_lower or "writ" in msg_lower:
-                    pw.set_phase("editing")
-                elif "commit" in msg_lower or "git" in msg_lower:
-                    pw.set_phase("committing")
-                elif "test" in msg_lower or "pytest" in msg_lower:
-                    pw.set_phase("testing")
-                elif "shell" in msg_lower or "$" in msg:
-                    pw.set_phase("running")
-            except Exception:
-                pass
 
         try:
             result = await dispatch_step(
@@ -1541,11 +1450,7 @@ class ReereeApp(App):
                 on_log=on_log,
             )
 
-            # Remove progress widget
-            elapsed = progress.finish()
-            await progress.remove()
-            mins, secs = divmod(int(elapsed), 60)
-            time_str = f"{mins}:{secs:02d}" if mins else f"{secs}s"
+            time_str = daemon.elapsed_str if daemon else "?"
 
             editor = self.query_one("#plan-editor", PlanEditor)
             status = result.get("status", "failed")
@@ -1585,12 +1490,6 @@ class ReereeApp(App):
             self._update_status()
 
         except Exception as e:
-            # Clean up progress widget on exception
-            try:
-                progress.finish()
-                await progress.remove()
-            except Exception:
-                pass
             self._daemon_log(daemon_id, f"EXCEPTION: {e}")
             if daemon:
                 daemon.status = DaemonStatus.FAILED
