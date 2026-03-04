@@ -792,31 +792,30 @@ class ReereeApp(App):
                 f"work queue between you and the user. Before executing anything:\n"
                 f"1. Read the current plan (shown below)\n"
                 f"2. Decompose the user's request into concrete steps\n"
-                f"3. Emit a ```plan block with the updated checklist\n"
+                f"3. Emit a ```yaml block with the updated plan\n"
                 f"4. THEN start executing steps\n\n"
-                f"The plan uses this exact markdown format:\n"
-                f"```\n"
-                f"# Plan: short description of intent\n\n"
-                f"- [x] Completed step [commit-hash]\n"
-                f"- [>] Currently executing step\n"
-                f"- [ ] Pending step\n"
-                f"  > annotation: extra context or acceptance criteria\n"
-                f"  > files: specific files this step touches\n"
-                f"  > done: how to verify this step is complete\n"
-                f"- [!] Failed step\n"
-                f"```\n\n"
-                f"Status markers: [x]=done, [>]=active, [ ]=pending, [!]=failed\n"
-                f"Annotations are indented lines starting with `> `\n"
-                f"PRESERVE existing completed steps — never remove [x] items.\n\n"
+                f"PRESERVE existing completed steps — never remove done items.\n\n"
                 f"## Actions you can take\n\n"
                 f"Update the plan (DO THIS FIRST on every new task):\n"
-                f"```plan\n"
-                f"# Plan: intent\n\n"
-                f"- [x] Step 1: Already done thing [abc1234]\n"
-                f"- [ ] Step 2: Next thing to do\n"
-                f"  > done: tests pass\n"
-                f"- [ ] Step 3: Another thing\n"
+                f"```yaml\n"
+                f"plan:\n"
+                f"  intent: \"short description of what we're doing\"\n"
+                f"  steps:\n"
+                f"    - status: done\n"
+                f"      description: \"Already completed thing\"\n"
+                f"      commit: abc1234\n"
+                f"    - status: active\n"
+                f"      description: \"Currently executing\"\n"
+                f"    - status: pending\n"
+                f"      description: \"Next thing to do\"\n"
+                f"      annotations:\n"
+                f"        - \"files: scraper.py\"\n"
+                f"        - \"done: tests pass\"\n"
+                f"    - status: failed\n"
+                f"      description: \"This step failed\"\n"
                 f"```\n\n"
+                f"Valid statuses: done, active, pending, failed\n"
+                f"Annotations are optional strings for context, file hints, acceptance criteria.\n\n"
                 f"Run shell commands:\n"
                 f"```shell\n"
                 f"python -m pytest tests/ -v\n"
@@ -846,13 +845,13 @@ class ReereeApp(App):
                 f"This is a MULTI-TURN loop — up to 5 rounds of action→result→action.\n"
                 f"ALWAYS read files before editing them. ALWAYS check git status before committing.\n\n"
                 f"## Rules\n"
-                f"- PLAN FIRST. Always emit a ```plan block before doing work.\n"
+                f"- PLAN FIRST. Always emit a ```yaml plan block before doing work.\n"
                 f"- Be concise. Do the thing, don't describe doing it.\n"
                 f"- If asked to run something, include a ```shell block. Don't say 'you can run...'.\n"
                 f"- If asked to edit code, read the file first, then ```edit or ```write.\n"
-                f"- Mark steps [>] when starting them, [x] when done, [!] if failed.\n"
+                f"- Update step statuses as you work (active when starting, done when finished, failed if broken).\n"
                 f"- Git commit after meaningful changes: ```shell\\ngit add -A && git commit -m 'msg'\\n```\n"
-                f"- When done with all actions, emit a final ```plan with updated statuses, then say DONE.\n\n"
+                f"- When done, emit a final ```yaml plan with updated statuses, then say DONE.\n\n"
                 f"Project context:\n{context[:8000]}\n\n"
                 f"Current plan:\n{plan_md}\n\n"
             )
@@ -946,7 +945,7 @@ class ReereeApp(App):
     async def _execute_actions_from_response(self, response: str) -> tuple[str, list[str]]:
         """Parse and execute action blocks from LLM response.
 
-        Handles: ```shell, ```write:path, ```edit:path, ```read:path, ```search, ```ls:path, ```plan
+        Handles: ```shell, ```write:path, ```edit:path, ```read:path, ```search, ```ls:path, ```yaml (plan), ```plan (legacy)
         Returns (display_text, action_results).
         """
         import re
@@ -958,7 +957,7 @@ class ReereeApp(App):
 
         # Find all fenced code blocks with language tags
         blocks = list(re.finditer(
-            r'```(shell|write:([^\n]+)|edit:([^\n]+)|read:([^\n]+)|search|ls:([^\n]*)|plan)\n(.*?)```',
+            r'```(shell|write:([^\n]+)|edit:([^\n]+)|read:([^\n]+)|search|ls:([^\n]*)|yaml|plan)\n(.*?)```',
             response, re.DOTALL
         ))
 
@@ -1080,12 +1079,21 @@ class ReereeApp(App):
                     results.append(f"ls {dirpath}: not found")
 
             elif tag == "plan":
+                # Legacy markdown plan block
                 self._apply_plan_from_response(response)
                 results.append("plan updated")
 
+            elif tag == "yaml":
+                # YAML plan block — preferred format
+                if self._apply_yaml_plan(content):
+                    results.append("plan updated (yaml)")
+                else:
+                    # Not a plan yaml — just report it
+                    results.append(f"yaml block (not a plan): {content[:200]}")
+
         # Strip action blocks from display text
         display = re.sub(
-            r'```(shell|write:[^\n]+|edit:[^\n]+|read:[^\n]+|search|ls:[^\n]*|plan)\n.*?```',
+            r'```(shell|write:[^\n]+|edit:[^\n]+|read:[^\n]+|search|ls:[^\n]*|yaml|plan)\n.*?```',
             lambda m: f'[dim][{m.group(1).split(":")[0]}][/dim]',
             display, flags=re.DOTALL
         )
@@ -1120,6 +1128,100 @@ class ReereeApp(App):
         except Exception as e:
             self._flog.error(f"Failed to parse plan from chat: {e}")
             self._exec_write(f"[red]Plan parse error: {e}[/red]")
+            return False
+
+    def _apply_yaml_plan(self, yaml_content: str) -> bool:
+        """Parse a YAML plan block and apply to editor.
+
+        Expected format:
+            plan:
+              intent: "description"
+              steps:
+                - status: done|active|pending|failed
+                  description: "step text"
+                  commit: optional-hash
+                  annotations:
+                    - "annotation text"
+
+        Returns True if plan was updated.
+        """
+        import yaml
+        from ..plan import Plan, Step
+
+        try:
+            data = yaml.safe_load(yaml_content)
+        except Exception as e:
+            self._flog.error(f"YAML parse error: {e}")
+            return False
+
+        if not isinstance(data, dict) or "plan" not in data:
+            return False
+
+        plan_data = data["plan"]
+        intent = plan_data.get("intent", self.plan.intent or "")
+        steps_data = plan_data.get("steps", [])
+
+        if not steps_data:
+            return False
+
+        STATUS_MAP = {
+            "done": "done",
+            "active": "active",
+            "pending": "pending",
+            "failed": "failed",
+            # Accept markdown-style too
+            "x": "done",
+            ">": "active",
+            " ": "pending",
+            "!": "failed",
+        }
+
+        steps = []
+        for s in steps_data:
+            if not isinstance(s, dict):
+                continue
+            status = STATUS_MAP.get(str(s.get("status", "pending")).lower(), "pending")
+            desc = s.get("description", "")
+            if not desc:
+                continue
+            step = Step(
+                description=desc,
+                status=status,
+                commit_hash=s.get("commit", None),
+            )
+            # Parse annotations
+            for ann in s.get("annotations", []):
+                ann_str = str(ann).strip()
+                if ann_str.startswith("files:"):
+                    step.files = [f.strip() for f in ann_str[6:].split(",")]
+                elif ann_str.startswith("done:"):
+                    step.annotations.append(ann_str)
+                else:
+                    step.annotations.append(ann_str)
+            # Also accept top-level files key
+            if "files" in s:
+                if isinstance(s["files"], list):
+                    step.files = s["files"]
+                elif isinstance(s["files"], str):
+                    step.files = [f.strip() for f in s["files"].split(",")]
+            steps.append(step)
+
+        if not steps:
+            return False
+
+        try:
+            new_plan = Plan(intent=intent, steps=steps)
+            self.plan = new_plan
+            editor = self.query_one("#plan-editor", PlanEditor)
+            editor.load_plan(self.plan)
+            self._save_plan()
+            self._update_status()
+            self._flog.info(f"Plan updated via YAML: {len(steps)} steps")
+            self._exec_write(f"[cyan]Plan updated: {len(steps)} steps[/cyan]")
+            return True
+        except Exception as e:
+            self._flog.error(f"Failed to apply YAML plan: {e}")
+            self._exec_write(f"[red]YAML plan error: {e}[/red]")
             return False
 
     def _save_plan(self) -> None:

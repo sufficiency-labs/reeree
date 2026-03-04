@@ -290,7 +290,7 @@ asyncio.run(test())
 ## Conventions
 - Keep it simple. Target ~3-5K lines total, not a framework.
 - No over-engineering. Build what's needed for the dispatch console UX.
-- Plan format is just markdown checkboxes — no custom DSL.
+- **Markdown and YAML are the lingfranks.** Plan files are markdown. Structured daemon communication uses YAML. No JSON schemas, no custom DSLs, no binary protocols. These two formats cover everything — human-readable, machine-parseable, universally understood.
 - The session daemon is simple. Socket server, session state, daemon pool. Not Kubernetes.
 
 ## Values
