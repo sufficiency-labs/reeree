@@ -876,7 +876,7 @@ class ReereeApp(App):
                 progress = DaemonProgress(
                     daemon_id=f"chat",
                     step_desc=f"turn {turn + 1}" if turn > 0 else user_msg[:50],
-                    scope=str(self._project_dir.name),
+                    scope=str(self.project_dir.name),
                 )
                 container = self.query_one("#daemon-progress")
                 container.mount(progress)
@@ -1662,7 +1662,7 @@ class ReereeApp(App):
         for _label, href in links:
             if href.startswith("http"):
                 continue
-            p = (self._project_dir / href).resolve()
+            p = (self.project_dir / href).resolve()
             if p.exists() and p.suffix in (".md", ".txt", ".py", ".json"):
                 doc_paths.append(p)
 
@@ -1684,7 +1684,7 @@ class ReereeApp(App):
         doc_paths = []
         for arg in args.split():
             # Try as glob first
-            matches = globmod.glob(str(self._project_dir / arg), recursive=True)
+            matches = globmod.glob(str(self.project_dir / arg), recursive=True)
             if matches:
                 for m in matches:
                     p = Path(m)
@@ -1692,7 +1692,7 @@ class ReereeApp(App):
                         doc_paths.append(p)
             else:
                 # Try as direct path
-                p = (self._project_dir / arg).resolve()
+                p = (self.project_dir / arg).resolve()
                 if p.is_file():
                     doc_paths.append(p)
                 elif p.is_dir():
@@ -1710,7 +1710,7 @@ class ReereeApp(App):
         doc_paths = list(dict.fromkeys(doc_paths))
         self._exec_write(f"[bold]Checking coherence across {len(doc_paths)} docs...[/bold]")
         for dp in doc_paths:
-            self._exec_write(f"  [dim]{dp.relative_to(self._project_dir)}[/dim]")
+            self._exec_write(f"  [dim]{dp.relative_to(self.project_dir)}[/dim]")
         await self._run_coherence_check(doc_paths)
 
     async def _run_coherence_check(self, doc_paths: list) -> None:
@@ -1722,7 +1722,7 @@ class ReereeApp(App):
         for dp in doc_paths:
             try:
                 content = dp.read_text()
-                rel = dp.relative_to(self._project_dir) if dp.is_relative_to(self._project_dir) else dp.name
+                rel = dp.relative_to(self.project_dir) if dp.is_relative_to(self.project_dir) else dp.name
                 if total_chars + len(content) > max_chars:
                     content = content[:max_chars - total_chars] + "\n... (truncated)"
                 doc_contents.append(f"### {rel}\n```\n{content}\n```")
@@ -1758,7 +1758,7 @@ class ReereeApp(App):
             "status": "active",
             "log": "",
             "last_log_time": time.monotonic(),
-            "scope": str(self._project_dir.name),
+            "scope": str(self.project_dir.name),
         }
         self._exec_write(f"[cyan]Coherence daemon d{did} dispatched[/cyan]")
 
