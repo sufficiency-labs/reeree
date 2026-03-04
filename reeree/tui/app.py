@@ -718,33 +718,43 @@ class ReereeApp(App):
 
             system = (
                 f"You are an executor daemon for a coding project.\n"
-                f"You can READ and WRITE the plan. The plan is a living markdown document.\n"
-                f"You can modify the plan by including an updated version in a ```plan code block.\n"
-                f"When you include a ```plan block, the plan will be updated live in the editor and saved.\n\n"
-                f"Plan format — each step is a markdown checkbox:\n"
-                f"  - [ ] Step N: description          (pending)\n"
-                f"  - [x] Step N: description          (done)\n"
-                f"  - [>] Step N: description          (active)\n"
-                f"  - [!] Step N: description          (failed)\n"
-                f"  - [~] Step N: description          (blocked)\n"
-                f"  Indented > lines are annotations the executor reads as context.\n\n"
-                f"Example — to add two steps to a plan:\n"
-                f"```plan\n"
-                f"# Plan: fix the bugs\n\n"
-                f"- [x] Step 1: Fix the crash\n"
-                f"- [ ] Step 2: Add input validation\n"
-                f"  > check for empty strings and None\n"
-                f"- [ ] Step 3: Write tests\n"
+                f"You can EXECUTE ACTIONS on the user's machine. You are not a chatbot — you are a worker.\n"
+                f"When the user asks you to do something, DO IT by including action blocks.\n\n"
+                f"## Actions you can take\n\n"
+                f"Run shell commands:\n"
+                f"```shell\n"
+                f"python -m pytest tests/ -v\n"
                 f"```\n\n"
-                f"Be concise and direct. If the user asks you to change the plan, DO IT — "
-                f"include the updated ```plan block. Don't just describe what you would do.\n\n"
+                f"Write a file:\n"
+                f"```write:path/to/file.py\n"
+                f"file contents here\n"
+                f"```\n\n"
+                f"Edit a file (find and replace):\n"
+                f"```edit:path/to/file.py\n"
+                f"<<<old text>>>\n"
+                f"<<<new text>>>\n"
+                f"```\n\n"
+                f"Update the plan:\n"
+                f"```plan\n"
+                f"# Plan: intent\n\n"
+                f"- [x] Step 1: Done thing\n"
+                f"- [ ] Step 2: Next thing\n"
+                f"```\n\n"
+                f"You can include MULTIPLE action blocks in one response. They execute in order.\n"
+                f"After actions execute, the results will be shown to you.\n\n"
+                f"## Rules\n"
+                f"- Be concise. Do the thing, don't describe doing it.\n"
+                f"- If asked to run something, include a ```shell block. Don't say 'you can run...'.\n"
+                f"- If asked to edit code, include a ```write or ```edit block.\n"
+                f"- If asked to update the plan, include a ```plan block.\n"
+                f"- Git commit after meaningful changes: ```shell\\ngit add -A && git commit -m 'msg'\\n```\n\n"
                 f"Project context:\n{context[:8000]}\n\n"
                 f"Current plan:\n{plan_md}\n\n"
             )
             # Include parent scope context if we're in a child scope
             if self._scope_stack:
                 parent_ctx = []
-                for pdir, pplan, _daemons, _chat, _target in self._scope_stack:
+                for pdir, pplan, _chat, _target in self._scope_stack:
                     parent_ctx.append(f"Parent scope: {pdir.name}")
                     if pplan.intent:
                         parent_ctx.append(f"  Plan: {pplan.intent}")
@@ -760,19 +770,17 @@ class ReereeApp(App):
             # Add response to history
             self._chat_messages.append({"role": "assistant", "content": response})
 
-            # Check for plan update block in response
-            plan_updated = self._apply_plan_from_response(response)
+            # Execute action blocks and update plan
+            display_response, action_results = await self._execute_actions_from_response(response)
 
-            # Display in exec log (same stream as everything else)
-            # Strip the plan block from display since we applied it
-            display_response = response
-            if plan_updated:
-                import re
-                display_response = re.sub(r'```plan\n.*?```', '[plan updated]', response, flags=re.DOTALL)
+            # Display in exec log
+            if display_response.strip():
                 self._exec_write(f"[bold green]{self._chat_target}:[/bold green] {display_response}")
-                self._exec_write(f"[bold yellow]Plan updated and saved.[/bold yellow]")
-            else:
-                self._exec_write(f"[bold green]{self._chat_target}:[/bold green] {response}")
+
+            # If there were action results, add them to chat history so LLM sees outcomes
+            if action_results:
+                results_msg = "\n".join(action_results)
+                self._chat_messages.append({"role": "user", "content": f"[Action results]\n{results_msg}"})
 
             # Keep message history manageable
             if len(self._chat_messages) > 40:
@@ -783,6 +791,91 @@ class ReereeApp(App):
             self._flog.error(f"Chat error: {e}")
         finally:
             self._chat_busy = False
+
+    async def _execute_actions_from_response(self, response: str) -> tuple[str, list[str]]:
+        """Parse and execute action blocks from LLM response.
+
+        Handles: ```shell, ```write:path, ```edit:path, ```plan
+        Returns (display_text, action_results).
+        """
+        import re
+        from ..executor import run_shell, write_file, edit_file, check_autonomy
+
+        display = response
+        results = []
+
+        # Find all fenced code blocks with language tags
+        blocks = list(re.finditer(
+            r'```(shell|write:([^\n]+)|edit:([^\n]+)|plan)\n(.*?)```',
+            response, re.DOTALL
+        ))
+
+        if not blocks:
+            return display, results
+
+        for block in blocks:
+            lang = block.group(1)
+            content = block.group(4).strip()
+
+            if lang == "shell":
+                # Execute shell command
+                ok, reason = check_autonomy(content, self.config.autonomy)
+                if not ok:
+                    self._exec_write(f"[red]Blocked: {reason}[/red]")
+                    results.append(f"BLOCKED: {reason}")
+                    continue
+                self._exec_write(f"[dim]$ {content}[/dim]")
+                result = run_shell(content, self.project_dir, autonomy=self.config.autonomy)
+                if result.output:
+                    # Truncate long output for display but keep full in log
+                    display_output = result.output[:2000]
+                    if len(result.output) > 2000:
+                        display_output += f"\n... ({len(result.output)} chars total)"
+                    self._exec_write(f"[dim]{display_output}[/dim]")
+                self._flog.info(f"Shell: {content} → {'ok' if result.success else 'fail'}")
+                results.append(f"$ {content}\n{result.output[:4000]}")
+
+            elif lang.startswith("write:"):
+                filepath = block.group(2).strip()
+                full_path = self.project_dir / filepath
+                result = write_file(full_path, content + "\n", project_dir=self.project_dir)
+                if result.success:
+                    self._exec_write(f"[green]Wrote {filepath}[/green]")
+                else:
+                    self._exec_write(f"[red]Write failed: {result.output}[/red]")
+                self._flog.info(f"Write: {filepath} → {'ok' if result.success else 'fail'}")
+                results.append(f"write {filepath}: {'ok' if result.success else result.output}")
+
+            elif lang.startswith("edit:"):
+                filepath = block.group(3).strip()
+                full_path = self.project_dir / filepath
+                # Parse <<<old>>> <<<new>>> format
+                edit_match = re.match(r'<<<(.+?)>>>\s*<<<(.+?)>>>', content, re.DOTALL)
+                if edit_match:
+                    old_text, new_text = edit_match.group(1), edit_match.group(2)
+                    result = edit_file(full_path, old_text, new_text, project_dir=self.project_dir)
+                    if result.success:
+                        self._exec_write(f"[green]Edited {filepath}[/green]")
+                    else:
+                        self._exec_write(f"[red]Edit failed: {result.output}[/red]")
+                    self._flog.info(f"Edit: {filepath} → {'ok' if result.success else 'fail'}")
+                    results.append(f"edit {filepath}: {'ok' if result.success else result.output}")
+                else:
+                    self._exec_write(f"[yellow]Edit parse error for {filepath}[/yellow]")
+                    results.append(f"edit {filepath}: parse error — expected <<<old>>> <<<new>>>")
+
+            elif lang == "plan":
+                self._apply_plan_from_response(response)
+                results.append("plan updated")
+
+        # Strip action blocks from display text
+        display = re.sub(
+            r'```(shell|write:[^\n]+|edit:[^\n]+|plan)\n.*?```',
+            lambda m: f'[dim][{m.group(1).split(":")[0]} executed][/dim]',
+            display, flags=re.DOTALL
+        )
+
+        return display, results
 
     def _apply_plan_from_response(self, response: str) -> bool:
         """Extract ```plan block from LLM response and apply to editor.
