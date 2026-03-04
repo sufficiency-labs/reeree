@@ -1455,14 +1455,138 @@ class ReereeApp(App):
             self._exec_write(f"[red]Revert failed:[/red] {result.output}")
 
     async def _propagate(self) -> None:
-        self._exec_write("[dim]Propagate: not yet implemented[/dim]")
+        """Crawl cross-references from the current plan/doc and check coherence."""
+        # Find all markdown links in the current plan
+        import re
+        plan_text = self.plan_editor.text
+        link_pattern = re.compile(r'\[([^\]]+)\]\(([^)]+)\)')
+        links = link_pattern.findall(plan_text)
+
+        if not links:
+            self._exec_write("[dim]No cross-references found to propagate.[/dim]")
+            return
+
+        # Resolve paths relative to project dir
+        doc_paths = []
+        for _label, href in links:
+            if href.startswith("http"):
+                continue
+            p = (self._project_dir / href).resolve()
+            if p.exists() and p.suffix in (".md", ".txt", ".py", ".json"):
+                doc_paths.append(p)
+
+        if not doc_paths:
+            self._exec_write("[dim]No local doc cross-references found.[/dim]")
+            return
+
+        self._exec_write(f"[bold]Propagating coherence check across {len(doc_paths)} linked docs...[/bold]")
+        await self._run_coherence_check(doc_paths)
 
     async def _cohere(self, args: str) -> None:
-        docs = args.split()
-        if not docs:
-            self.notify("Usage: :cohere doc1.md doc2.md", severity="warning")
+        """Check coherence across specified docs. Accepts paths, globs, wildcards."""
+        import glob as globmod
+
+        if not args.strip():
+            self.notify("Usage: :cohere doc1.md doc2.md  or  :cohere *.md  or  :cohere docs/", severity="warning")
             return
-        self._exec_write(f"[dim]Cohere ({len(docs)} docs): not yet implemented[/dim]")
+
+        doc_paths = []
+        for arg in args.split():
+            # Try as glob first
+            matches = globmod.glob(str(self._project_dir / arg), recursive=True)
+            if matches:
+                for m in matches:
+                    p = Path(m)
+                    if p.is_file() and p.suffix in (".md", ".txt", ".py", ".json", ".toml", ".yaml", ".yml"):
+                        doc_paths.append(p)
+            else:
+                # Try as direct path
+                p = (self._project_dir / arg).resolve()
+                if p.is_file():
+                    doc_paths.append(p)
+                elif p.is_dir():
+                    # If it's a directory, grab all markdown files in it
+                    for md in sorted(p.glob("**/*.md")):
+                        doc_paths.append(md)
+                else:
+                    self._exec_write(f"[yellow]Warning: {arg} not found[/yellow]")
+
+        if not doc_paths:
+            self._exec_write("[red]No documents found matching the given paths.[/red]")
+            return
+
+        # Deduplicate
+        doc_paths = list(dict.fromkeys(doc_paths))
+        self._exec_write(f"[bold]Checking coherence across {len(doc_paths)} docs...[/bold]")
+        for dp in doc_paths:
+            self._exec_write(f"  [dim]{dp.relative_to(self._project_dir)}[/dim]")
+        await self._run_coherence_check(doc_paths)
+
+    async def _run_coherence_check(self, doc_paths: list) -> None:
+        """Dispatch a coherence daemon to check a set of documents."""
+        # Read all docs
+        doc_contents = []
+        total_chars = 0
+        max_chars = self.config.max_context_tokens * 4  # rough char estimate
+        for dp in doc_paths:
+            try:
+                content = dp.read_text()
+                rel = dp.relative_to(self._project_dir) if dp.is_relative_to(self._project_dir) else dp.name
+                if total_chars + len(content) > max_chars:
+                    content = content[:max_chars - total_chars] + "\n... (truncated)"
+                doc_contents.append(f"### {rel}\n```\n{content}\n```")
+                total_chars += len(content)
+                if total_chars >= max_chars:
+                    break
+            except Exception as e:
+                self._exec_write(f"[yellow]Could not read {dp}: {e}[/yellow]")
+
+        if not doc_contents:
+            self._exec_write("[red]No documents could be read.[/red]")
+            return
+
+        system = (
+            "You are a coherence-checking daemon. Your job is to read a set of documents "
+            "and identify contradictions, stale references, inconsistencies, and gaps.\n\n"
+            "For each issue found, report:\n"
+            "- **Location**: which doc(s) and what section\n"
+            "- **Issue**: what's wrong (contradiction, stale ref, missing info, etc.)\n"
+            "- **Suggestion**: how to fix it\n\n"
+            "Be specific and concise. If everything is coherent, say so.\n"
+            "Focus on factual contradictions and structural issues, not style.\n"
+        )
+
+        user_msg = f"Check these documents for coherence:\n\n{''.join(doc_contents)}"
+
+        # Dispatch as a daemon task
+        did = self._next_daemon_id
+        self._next_daemon_id += 1
+        self._daemons[did] = {
+            "task": None,
+            "step_index": -1,
+            "status": "active",
+            "log": "",
+            "last_log_time": time.monotonic(),
+            "scope": str(self._project_dir.name),
+        }
+        self._exec_write(f"[cyan]Coherence daemon d{did} dispatched[/cyan]")
+
+        import asyncio
+
+        async def run_coherence():
+            try:
+                messages = [{"role": "user", "content": user_msg}]
+                response = await chat_async(messages, self.config, system=system)
+                self._daemon_log(did, response)
+                self._exec_write(f"[green]d{did} coherence check complete[/green]")
+                self._daemons[did]["status"] = "done"
+            except Exception as e:
+                self._daemon_log(did, f"ERROR: {e}")
+                self._exec_write(f"[red]d{did} coherence check failed: {e}[/red]")
+                self._daemons[did]["status"] = "failed"
+
+        task = asyncio.create_task(run_coherence())
+        self._daemons[did]["task"] = task
 
 
 class CommandScreen(ModalScreen[str]):
