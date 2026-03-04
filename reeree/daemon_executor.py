@@ -1,4 +1,12 @@
-"""Daemon executor — dispatches and runs a step."""
+"""Daemon executor — multi-turn step execution.
+
+Each dispatched daemon is a persistent LLM conversation, not a one-shot call.
+The daemon calls the LLM, executes actions, feeds results back as the next
+message, and loops until the LLM signals done or a turn limit is hit.
+
+This means a daemon can: read a file → understand it → edit it → run tests →
+see the failure → fix it. Like a process, not a function call.
+"""
 
 import json
 from pathlib import Path
@@ -7,46 +15,53 @@ from typing import Callable
 from .config import Config
 from .plan import Step
 from .context import gather_context
-from .llm import chat, chat_async
-from .executor import run_shell, write_file, edit_file, git_commit
+from .llm import chat_async
+from .executor import run_shell, write_file, edit_file, git_commit, ExecResult
 
 
-EXECUTOR_SYSTEM = """You are a daemon that EXECUTES one step of a coding plan.
+MAX_TURNS = 10  # Safety limit — daemon can't loop forever
 
-You MUST actually make changes — write files, edit code, run commands.
-DO NOT just read files and call it done. Reading is preparation, not execution.
-If the step says "add X to file.py", you MUST include a write or edit action that adds X.
+
+EXECUTOR_SYSTEM = """You are a daemon that executes one step of a coding plan.
+You work in a LOOP: you respond with actions, they get executed, you see the results,
+and you respond again. Keep going until the step is DONE.
 
 RESPOND WITH VALID YAML ONLY. No markdown, no explanation, no text outside the YAML.
 
 Action types:
 ```yaml
 actions:
-  - type: read          # Read a file (for understanding before editing)
+  - type: read
     path: file.py
-  - type: shell         # Run a shell command
+  - type: shell
     command: "pytest tests/ -v"
-  - type: write         # Write/create a file (full content)
+  - type: write
     path: file.py
     content: |
       full file content here
-  - type: edit          # Edit part of a file (search and replace)
+  - type: edit
     path: file.py
     old: "exact old text"
     new: "new text"
-summary: "one sentence describing what was done"
-next_step_notes:       # OPTIONAL — pass observations to the next step
-  - "e.g. 'found config uses YAML not JSON'"
+status: continue          # "continue" = I need more turns, "done" = step is complete
+summary: "what I just did"
+next_step_notes:          # OPTIONAL — only on final turn, pass to next step
+  - "observation for whoever works on the next step"
 ```
 
+WORKFLOW:
+1. First turn: read the relevant files to understand the code.
+2. Middle turns: make edits, write files, run commands. See results. Fix issues.
+3. Final turn: verify your work (run tests if applicable), set status: done.
+
 RULES:
-- You MUST include at least one write, edit, or shell action. Read-only responses are WRONG.
-- A typical step: read the relevant file(s), then edit or write the changes.
-- Use edit (old/new) for surgical changes to existing files.
-- Use write (full content) for new files or full rewrites.
-- Use shell for running tests, installing packages, etc.
-- Use YAML block scalars (|) for multi-line content in write actions.
-- You may wrap the YAML in ```yaml fences if you prefer.
+- You MUST set status to "done" when the step is complete.
+- If status is "continue", you WILL get another turn with the results of your actions.
+- Read-only first turns are fine — you need to understand before you edit.
+- But you MUST make actual changes (write/edit/shell) before setting status: done.
+- Use edit (old/new) for surgical changes. Use write for new files or rewrites.
+- Use YAML block scalars (|) for multi-line content.
+- You may wrap YAML in ```yaml fences.
 - Output ONLY the YAML, nothing else."""
 
 
@@ -109,73 +124,36 @@ def _parse_llm_response(text: str) -> dict | None:
     return None
 
 
-async def dispatch_step(
-    step: Step,
-    step_index: int,
+def _execute_actions(
+    actions: list[dict],
     project_dir: Path,
     config: Config,
-    on_log: Callable[[str], None] | None = None,
-) -> dict:
-    """Execute a single step. Returns result dict with status and commit hash."""
+    log: Callable[[str], None],
+) -> tuple[list[ExecResult], list[str]]:
+    """Execute a list of actions. Returns (results, feedback_lines).
 
-    def log(msg: str) -> None:
-        if on_log:
-            on_log(msg)
-
-    log(f"Executing: {step.description}")
-
-    # Gather focused context
-    context = gather_context(step, project_dir, config.max_context_tokens * 4)
-    log(f"Context: {len(context)} chars")
-
-    # Build prompt
-    prompt_parts = [f"Project context:\n{context}"]
-    prompt_parts.append(f"\nStep: {step.description}")
-
-    if step.files or step.file_hints:
-        files = step.files or step.file_hints
-        prompt_parts.append(f"Files: {', '.join(files)}")
-
-    if step.context_annotations:
-        prompt_parts.append("Instructions:\n" + "\n".join(f"- {a}" for a in step.context_annotations))
-
-    if step.done_criteria:
-        prompt_parts.append(f"Acceptance criteria: {step.done_criteria}")
-
-    prompt_parts.append("\nExecute this step NOW. Respond with YAML actions including at least one write, edit, or shell action.")
-
-    messages = [{"role": "user", "content": "\n\n".join(prompt_parts)}]
-
-    # LLM call
-    log("LLM call...")
-    try:
-        response = await chat_async(messages, config, system=EXECUTOR_SYSTEM)
-    except Exception as e:
-        log(f"ERROR: {e}")
-        return {"status": "failed", "error": str(e)}
-
-    # Parse response — robust handling for small model output
-    data = _parse_llm_response(response)
-    if data is None:
-        log(f"PARSE ERROR — raw response:")
-        log(response[:500])
-        return {"status": "failed", "error": "Failed to parse LLM response as JSON"}
-    actions = data.get("actions", [])
-    summary = data.get("summary", "")
-    next_step_notes = data.get("next_step_notes", [])
-
-    # Execute actions
-    log(f"Actions: {len(actions)}")
+    feedback_lines are human-readable strings describing what happened,
+    suitable for feeding back to the LLM as context for the next turn.
+    """
     results = []
+    feedback = []
+
     for action in actions:
         action_type = action.get("type", "unknown")
 
         if action_type == "read":
             path = project_dir / action["path"]
             if path.exists():
-                log(f"> read {action['path']} ({len(path.read_text())} chars)")
+                content = path.read_text()
+                log(f"> read {action['path']} ({len(content)} chars)")
+                # Feed file content back to the LLM
+                if len(content) > 8000:
+                    feedback.append(f"=== {action['path']} ({len(content)} chars, truncated) ===\n{content[:8000]}\n... (truncated)")
+                else:
+                    feedback.append(f"=== {action['path']} ===\n{content}")
             else:
                 log(f"> read {action['path']} — NOT FOUND")
+                feedback.append(f"ERROR: {action['path']} does not exist")
 
         elif action_type == "shell":
             from .executor import classify_command
@@ -187,6 +165,7 @@ async def dispatch_step(
             if not result.success and "BLOCKED" in result.output:
                 log(f"  BLOCKED by safety guardrails")
             results.append(result)
+            feedback.append(f"$ {action['command']}\n{'OK' if result.success else 'FAILED'}: {result.output[:2000]}")
 
         elif action_type == "write":
             path = project_dir / action["path"]
@@ -194,6 +173,7 @@ async def dispatch_step(
             log(f"> write {action['path']} ({len(content)} chars)")
             result = write_file(path, content, project_dir=project_dir)
             results.append(result)
+            feedback.append(f"write {action['path']}: {'OK' if result.success else 'FAILED'} — {result.output}")
 
         elif action_type == "edit":
             path = project_dir / action["path"]
@@ -202,22 +182,122 @@ async def dispatch_step(
             results.append(result)
             if not result.success:
                 log(f"  FAILED: {result.output}")
+            feedback.append(f"edit {action['path']}: {'OK' if result.success else 'FAILED'} — {result.output}")
 
-    # Check if any actual changes were made (not just reads)
-    has_mutations = any(
-        action.get("type") in ("write", "edit", "shell")
-        for action in actions
-    )
+        else:
+            feedback.append(f"Unknown action type: {action_type}")
+
+    return results, feedback
+
+
+async def dispatch_step(
+    step: Step,
+    step_index: int,
+    project_dir: Path,
+    config: Config,
+    on_log: Callable[[str], None] | None = None,
+) -> dict:
+    """Execute a single step via multi-turn LLM conversation.
+
+    The daemon loops: call LLM → execute actions → feed results back → repeat.
+    Stops when LLM sets status: done, or turn limit is hit.
+    Returns result dict with status, commit hash, summary, next_step_notes.
+    """
+
+    def log(msg: str) -> None:
+        if on_log:
+            on_log(msg)
+
+    log(f"Executing: {step.description}")
+
+    # Gather focused context
+    context = gather_context(step, project_dir, config.max_context_tokens * 4)
+    log(f"Context: {len(context)} chars")
+
+    # Build initial prompt
+    prompt_parts = [f"Project context:\n{context}"]
+    prompt_parts.append(f"\nStep to execute: {step.description}")
+
+    if step.files or step.file_hints:
+        files = step.files or step.file_hints
+        prompt_parts.append(f"Relevant files: {', '.join(files)}")
+
+    if step.context_annotations:
+        prompt_parts.append("Instructions:\n" + "\n".join(f"- {a}" for a in step.context_annotations))
+
+    if step.done_criteria:
+        prompt_parts.append(f"Acceptance criteria: {step.done_criteria}")
+
+    prompt_parts.append("\nBegin executing this step. Read files first if needed, then make changes.")
+
+    # Persistent conversation — this is the key difference from one-shot
+    messages = [{"role": "user", "content": "\n\n".join(prompt_parts)}]
+
+    all_results: list[ExecResult] = []
+    has_mutations = False
+    last_summary = ""
+    next_step_notes = []
+
+    for turn in range(MAX_TURNS):
+        log(f"LLM call (turn {turn + 1}/{MAX_TURNS})...")
+
+        try:
+            response = await chat_async(messages, config, system=EXECUTOR_SYSTEM)
+        except Exception as e:
+            log(f"ERROR: {e}")
+            return {"status": "failed", "error": str(e)}
+
+        # Parse response
+        data = _parse_llm_response(response)
+        if data is None:
+            log(f"PARSE ERROR (turn {turn + 1}) — raw response:")
+            log(response[:500])
+            # Give the LLM one more chance with a nudge
+            messages.append({"role": "assistant", "content": response})
+            messages.append({"role": "user", "content": "That was not valid YAML. Respond with YAML only. Format: actions: [...], status: continue/done, summary: '...'"})
+            continue
+
+        actions = data.get("actions", [])
+        status = data.get("status", "done")  # default to done for backwards compat
+        last_summary = data.get("summary", last_summary)
+        turn_notes = data.get("next_step_notes", [])
+        if turn_notes:
+            next_step_notes = turn_notes  # last turn's notes win
+
+        log(f"Turn {turn + 1}: {len(actions)} actions, status={status}")
+
+        # Track mutations
+        turn_has_mutations = any(
+            action.get("type") in ("write", "edit", "shell")
+            for action in actions
+        )
+        if turn_has_mutations:
+            has_mutations = True
+
+        # Execute actions and collect feedback
+        results, feedback = _execute_actions(actions, project_dir, config, log)
+        all_results.extend(results)
+
+        # Check if done
+        if status == "done":
+            break
+
+        # Feed results back for next turn
+        messages.append({"role": "assistant", "content": response})
+        feedback_text = "\n\n".join(feedback) if feedback else "No output from actions."
+        messages.append({"role": "user", "content": f"Results from your actions:\n\n{feedback_text}\n\nContinue executing the step. When done, set status: done."})
+
+    else:
+        # Hit turn limit
+        log(f"WARNING: hit {MAX_TURNS}-turn limit")
+
+    # Final assessment
     if not has_mutations:
-        log("WARNING: daemon only read files, made no changes")
-
-    # Results
-    all_ok = all(r.success for r in results) if results else True
-
-    if not has_mutations:
-        # Read-only response — report as incomplete, don't create empty commit
-        return {"status": "failed", "error": "Daemon only read files, made no changes",
+        log("WARNING: daemon made no changes across all turns")
+        return {"status": "failed", "error": "Daemon made no changes (read-only)",
                 "next_step_notes": next_step_notes}
+
+    all_ok = all(r.success for r in all_results) if all_results else True
 
     if all_ok:
         commit_result = git_commit(f"reeree: {step.description}", project_dir)
@@ -228,17 +308,17 @@ async def dispatch_step(
                 if len(word) == 7 and all(c in "0123456789abcdef" for c in word):
                     commit_hash = word
                     break
-            log(f"Done: {summary}")
+            log(f"Done: {last_summary}")
             if next_step_notes:
                 log(f"Notes for next step: {next_step_notes}")
-            return {"status": "done", "commit_hash": commit_hash, "summary": summary,
+            return {"status": "done", "commit_hash": commit_hash, "summary": last_summary,
                     "next_step_notes": next_step_notes}
         else:
             log(f"Commit failed: {commit_result.output}")
-            return {"status": "done", "commit_hash": None, "summary": summary,
+            return {"status": "done", "commit_hash": None, "summary": last_summary,
                     "next_step_notes": next_step_notes}
     else:
-        failures = [r.output for r in results if not r.success]
+        failures = [r.output for r in all_results if not r.success]
         log(f"FAILED: {'; '.join(failures)}")
         return {"status": "failed", "error": "; ".join(failures),
                 "next_step_notes": next_step_notes}
