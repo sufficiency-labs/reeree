@@ -44,7 +44,7 @@ High-level decisions about *how* we build. Each ADR references the values it ser
 | [ADR-011](strategic/decisions/ADR-011-subrepo-scope-as-lexical-binding.md) | Subrepo scope as lexical binding | Accepted | Focused Context, Plan Is the Interface |
 | [ADR-012](strategic/decisions/ADR-012-daemon-personality-evolution.md) | Daemon personality evolution | Proposed | Delegated Agency, No Anthropomorphism |
 | [ADR-013](strategic/decisions/ADR-013-pluggable-execution-backends.md) | Pluggable execution backends | Proposed | Sufficiency, No Lock-in |
-| [ADR-014](strategic/decisions/ADR-014-simplified-technical-english.md) | STE default voice spec | Proposed | No Anthropomorphism, Sufficiency |
+| [ADR-014](strategic/decisions/ADR-014-simplified-technical-english.md) | Clear Technical English voice spec | Proposed | No Anthropomorphism, Sufficiency |
 
 ---
 

@@ -1,102 +1,122 @@
-# ADR-014: Simplified Technical English as Default Voice Spec
+# ADR-014: Clear Technical English — Voice Specification
 
 **Status:** Proposed
 **Date:** 2026-03-05
 
 ## Context
 
-Reeree's ship's computer voice needs a concrete specification, not just vibes. ASD-STE100 Simplified Technical English is a controlled natural language standard originally designed for aerospace maintenance manuals. Its rules produce exactly the kind of output reeree wants: clear, direct, unambiguous, no filler.
+Reeree's ship's computer voice needs a concrete specification, not just vibes. The initial proposal was ASD-STE100 Simplified Technical English — a controlled language for aerospace maintenance manuals. But STE is too restrictive: 900-word vocabulary, no present perfect tense, rigid procedural formatting. That's fine for "remove bolt A from panel B." It's too limited for a tool that needs to explain architectural decisions, summarize complex reasoning, or surface nuanced context.
 
-STE's core constraints:
-- One word, one meaning (no synonyms — pick "start", never "begin/commence/initiate")
-- Max 25 words per procedural sentence, 20 per step
-- Active voice only
-- No present perfect tense
-- Approved vocabulary (~900 words) plus domain-specific technical terms
-- No unnecessary adjectives or adverbs
-
-This maps directly to the ship's computer voice: direct, informational, no hedging.
+What we want is **STE's clarity principles without its vocabulary straitjacket.** A fork.
 
 ## Decision
 
-STE rules form the **default expressive language constraint** for all daemon output. Implemented as the first reeree plugin (`reeree-ste`), which:
+"Clear Technical English" (CTE) — derived from STE's structure rules but with open vocabulary and loosened grammar. The goal is output that reads like a competent engineer's notes: precise, scannable, natural.
 
-1. **Injects STE rules into every daemon system prompt** — a brief summary of the key constraints, not the full 53-rule spec
-2. **Allows project-specific technical terms** — the STE dictionary is extended with terms from the project (function names, tool names, domain vocabulary)
-3. **Is the default plugin** — enabled by default, can be disabled per project
+### Rules (Adopted from STE)
 
-### STE Rules Summary for System Prompts
+These survive intact because they're genuinely useful:
 
-The plugin prepends approximately this to every daemon system prompt:
+1. **Prefer active voice.** "Daemon 3 wrote auth.py" not "auth.py was written by daemon 3." Passive is acceptable when the actor is unknown or irrelevant ("3 files changed").
+2. **One idea per sentence.** Don't chain clauses with semicolons or "and." Break compound thoughts into separate sentences.
+3. **No filler words.** Remove: basically, actually, essentially, simply, just, really, very, quite, pretty (as qualifier), rather, somewhat, perhaps.
+4. **No hedging.** Remove: might, maybe, I think, it seems, it appears, could potentially, we should consider. State what happened or what's true. If uncertain, say "uncertain" explicitly.
+5. **No performative language.** Remove: I'm excited, great question, let me, I'd be happy to, certainly, absolutely. Report actions and results.
+6. **Prefer short sentences.** Target 15-25 words. Longer is fine when breaking would lose clarity. Don't break natural sentences artificially.
+7. **Report past tense, not future.** "Added retry logic" not "I'm going to add retry logic." The exception: plan steps, which describe future work.
+
+### Rules (Loosened from STE)
+
+These are too restrictive for daemon output:
+
+8. **Full English vocabulary.** No 900-word dictionary limit. Domain-specific language, technical terms, and natural English are all permitted. The constraint is clarity, not vocabulary size.
+9. **Present perfect is fine.** "Tests have passed" and "3 files changed" are natural. STE bans present perfect because manual readers might confuse tense. Daemons don't have that problem.
+10. **Explanatory text is permitted.** STE is for procedures only. CTE applies to all daemon output: summaries, explanations, error reports, chat responses. Explanations can use complex sentences when the idea requires it.
+11. **Personality is permitted.** Wit, dryness, and style are fine. The rules constrain *noise*, not *voice*. A daemon that reports "auth.py: 3 functions, 2 questionable" has personality. That's good.
+
+### What CTE is NOT
+
+- **Not a vocabulary restriction.** Use whatever words communicate clearly.
+- **Not anti-conversational.** Daemons should respond naturally in chat mode. CTE constrains log/status output and action reporting, not dialogue.
+- **Not robotic.** "Ship's computer" doesn't mean monotone. It means competent, direct, no wasted words. Personality comes through in *what* you choose to report and *how concisely* you report it — not through emoting.
+
+### System Prompt Implementation
+
+The CTE spec compresses to ~100 tokens in a system prompt:
 
 ```
-Output constraints (Simplified Technical English):
-- Max 25 words per sentence. Max 20 words per procedural step.
-- Active voice. Present tense. No present perfect.
-- One word, one meaning. Use "start" not "begin/commence/initiate".
-- No filler: remove "basically", "actually", "essentially", "simply".
-- No hedging: remove "might", "perhaps", "I think", "it seems".
-- Approved verbs for actions: do, make, put, get, go, set, run, test, check, read, write, find, show, give, keep, let, move, open, close, turn, add, cut, hold.
-- Report what happened, not what you're "going to" do.
-- Technical terms from this project are permitted as-is.
+Voice: clear technical English.
+- Active voice. One idea per sentence. Short sentences (15-25 words).
+- No filler (basically, actually, simply, just, very, quite).
+- No hedging (might, maybe, I think, it seems, could potentially).
+- No performative language (I'm excited, great question, let me).
+- Report what happened (past tense), not what you're going to do.
+- Personality and wit are fine. Noise and emoting are not.
 ```
 
 ### Plugin Architecture
 
 ```python
-# reeree_ste/plugin.py
-class STEPlugin(ReereePlugin):
-    name = "reeree-ste"
+class CTEPlugin(ReereePlugin):
+    name = "reeree-cte"
 
     def on_daemon_prompt(self, prompt: str, daemon: Daemon) -> str:
-        """Prepend STE constraints to daemon system prompt."""
-        return STE_RULES + "\n\n" + prompt
-
-    def on_plan_loaded(self, plan: Plan) -> None:
-        """Extract technical terms from plan for STE dictionary."""
-        # Scan step descriptions for project-specific terms
-        pass
+        """Prepend CTE voice spec to daemon system prompt."""
+        return CTE_SPEC + "\n\n" + prompt
 ```
 
-### Configurable strictness
+### Configurable
 
 ```yaml
-# .reeree/plugins/ste.yaml
+# .reeree/plugins/cte.yaml
 enabled: true
-strictness: standard  # relaxed | standard | strict
-custom_terms:
-  - pytest
-  - daemon
-  - systemd
-  - rsync
+mode: standard  # relaxed | standard
 ```
 
-- **relaxed**: Only no-hedging and no-filler rules. Sentence length unconstrained.
-- **standard**: Full STE rules. Technical terms auto-discovered from project.
-- **strict**: Full STE rules. Manual term approval required.
+- **relaxed**: Only rules 3-5 (no filler, no hedging, no performative). For chat-heavy use.
+- **standard**: All rules. For execution and reporting output.
+
+## Relationship to STE
+
+CTE is a **pragmatic fork** of ASD-STE100. It takes the structural rules (active voice, short sentences, no filler) and discards the vocabulary restrictions and grammar rigidity that make STE unsuitable for general-purpose technical communication.
+
+| STE Rule | CTE | Why |
+|----------|-----|-----|
+| 900-word approved vocabulary | Open vocabulary | Daemons need full English for explanations |
+| No present perfect | Permitted | "Tests have passed" is natural |
+| Max 20 words per step | Guideline, not hard limit | Some steps need longer descriptions |
+| Procedural text only | All text types | Daemons produce summaries, explanations, chat |
+| No synonyms (pick one word) | Prefer consistency, don't enforce | "start" and "begin" are both fine in context |
+| Active voice mandatory | Active voice preferred | Passive OK when actor is irrelevant |
 
 ## Values Served
 
-- **[No Anthropomorphism](../../VALUES.md#7-no-anthropomorphism-personality-is-fine)** — STE structurally prevents hedging, emoting, and simulated cognition. The vocabulary constraints make it physically difficult to write "I think" or "I'm excited."
-- **[Sufficiency Over Maximalism](../../VALUES.md#6-sufficiency-over-maximalism)** — STE was designed for non-native English speakers maintaining aircraft. If it works for them, it works for daemon output. No wasted tokens.
-- **[Plan Is the Interface](../../VALUES.md#2-plan-is-the-interface)** — STE makes plan step descriptions clear and actionable. "Add retry logic to sync.sh" not "We should consider implementing a retry mechanism."
+- **[No Anthropomorphism](../../VALUES.md#7-no-anthropomorphism-personality-is-fine)** — CTE structurally eliminates hedging, emoting, and performative language. The rules make it difficult to write "I think" or "I'm excited" without consciously breaking them.
+- **[Sufficiency Over Maximalism](../../VALUES.md#6-sufficiency-over-maximalism)** — ~100 tokens in the system prompt. No vocabulary database to maintain. No complex rule engine.
+- **[Plan Is the Interface](../../VALUES.md#2-plan-is-the-interface)** — CTE makes plan step descriptions clear and actionable without being robotically terse.
 
 ## Alternatives Considered
 
 | Option | Verdict | Why |
 |--------|---------|-----|
-| Ad-hoc voice guidelines in system prompts | Current state | Works but inconsistent. Different prompts say different things. |
-| Full STE spec (53 rules, 900-word dictionary) | Too heavy | Adds ~2000 tokens to every prompt. Models don't need the full spec. |
-| Custom controlled language | Unnecessary | STE already exists and is well-specified. Don't reinvent it. |
-| Plugin (proposed) | Accepted | Configurable, disable-able, extensible with project terms. |
+| Ad-hoc voice guidelines | Current state | Inconsistent. Each prompt says something different. |
+| Pure STE (ASD-STE100) | Too restrictive | 900-word dictionary kills expressiveness. Grammar too rigid. |
+| No specification (just "be clear") | Too vague | LLMs default to performative helpfulness without specific rules. |
+| CTE (proposed) | Accepted | STE's clarity principles + open vocabulary + natural grammar. |
+
+## Consequences
+
+- All daemon system prompts get a consistent ~100 token CTE preamble
+- Personality evolution (ADR-012) can override or extend CTE per daemon profile
+- CTE is the default; projects can disable via plugin config
+- New daemon kinds inherit CTE automatically
 
 ## Implementation Path
 
-1. Create `reeree-ste` plugin package with STE rules summary
-2. Add `on_daemon_prompt` hook to plugin interface (ADR-009)
-3. Register as default plugin in setup wizard
-4. Auto-discover technical terms from project files
-5. Add `:ste` command to toggle strictness
+1. Define CTE spec as a constant in `reeree/voice.py` (or `plugin.py`)
+2. Inject into all daemon system prompts (executor, planner, coherence, setup)
+3. Package as default plugin (`reeree-cte`)
+4. Add `on_daemon_prompt` hook to plugin interface (ADR-009)
 
 ---
 
