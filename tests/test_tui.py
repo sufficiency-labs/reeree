@@ -28,7 +28,7 @@ def _make_config() -> Config:
     c.api_key = "test-key-for-testing"  # non-empty to prevent setup wizard
     c.autonomy = "medium"
     c.project_dir = "."
-    c.plan_file = ".reeree/plan.md"
+    c.plan_file = ".reeree/plan.yaml"
     c.max_context_tokens = 24000
     c.models = {}
     c.routing = {}
@@ -335,7 +335,7 @@ class TestCommandMode:
             await pilot.press("w", "enter")
             await pilot.pause(0.1)
 
-            plan_path = tmp_path / ".reeree" / "plan.md"
+            plan_path = tmp_path / ".reeree" / "plan.yaml"
             assert plan_path.exists()
             content = plan_path.read_text()
             assert "fix the scraper bugs" in content
@@ -418,7 +418,7 @@ class TestCommandMode:
             await pilot.press("q", "enter")
             await pilot.pause(0.2)
             # Plan should be saved
-            plan_path = tmp_path / ".reeree" / "plan.md"
+            plan_path = tmp_path / ".reeree" / "plan.yaml"
             assert plan_path.exists()
 
     @pytest.mark.asyncio
@@ -819,7 +819,7 @@ class TestPlanEditor:
 class TestPlanPersistence:
     @pytest.mark.asyncio
     async def test_save_creates_file(self, tmp_path):
-        """Saving writes plan.md to .reeree/."""
+        """Saving writes plan.yaml to .reeree/."""
         plan = _make_plan()
         app = _make_app(tmp_path, plan)
         async with app.run_test() as pilot:
@@ -828,11 +828,11 @@ class TestPlanPersistence:
             await pilot.press("w", "enter")
             await pilot.pause(0.1)
 
-            plan_path = tmp_path / ".reeree" / "plan.md"
+            plan_path = tmp_path / ".reeree" / "plan.yaml"
             assert plan_path.exists()
             content = plan_path.read_text()
             assert "Add visited URL tracking" in content
-            assert "[x]" in content
+            assert "status: done" in content
 
     @pytest.mark.asyncio
     async def test_wq_saves_and_exits(self, tmp_path):
@@ -845,7 +845,7 @@ class TestPlanPersistence:
             await pilot.press("w", "q", "enter")
             await pilot.pause(0.2)
 
-            plan_path = tmp_path / ".reeree" / "plan.md"
+            plan_path = tmp_path / ".reeree" / "plan.yaml"
             assert plan_path.exists()
 
     @pytest.mark.asyncio
@@ -859,7 +859,7 @@ class TestPlanPersistence:
             await pilot.press("q", "enter")
             await pilot.pause(0.2)
 
-            plan_path = tmp_path / ".reeree" / "plan.md"
+            plan_path = tmp_path / ".reeree" / "plan.yaml"
             assert plan_path.exists()
 
     @pytest.mark.asyncio
@@ -874,7 +874,7 @@ class TestPlanPersistence:
             await pilot.press("q", "!", "enter")
             await pilot.pause(0.2)
 
-            plan_path = tmp_path / ".reeree" / "plan.md"
+            plan_path = tmp_path / ".reeree" / "plan.yaml"
             assert not plan_path.exists()
 
     @pytest.mark.asyncio
@@ -896,7 +896,7 @@ class TestPlanPersistence:
             await pilot.press("w", "enter")
             await pilot.pause(0.1)
 
-            plan_path = tmp_path / ".reeree" / "plan.md"
+            plan_path = tmp_path / ".reeree" / "plan.yaml"
             content = plan_path.read_text()
             assert "edited" in content.lower() or "original" in content
 
@@ -968,7 +968,7 @@ class TestPlanUpdateFromChat:
             assert app.plan.steps[1].description == "new step from chat"
 
             # Plan should be saved to disk
-            plan_path = tmp_path / ".reeree" / "plan.md"
+            plan_path = tmp_path / ".reeree" / "plan.yaml"
             assert plan_path.exists()
             content = plan_path.read_text()
             assert "new step from chat" in content
@@ -1175,11 +1175,11 @@ class TestContextScoping:
 
     @pytest.mark.asyncio
     async def test_cd_loads_child_plan(self, tmp_path):
-        """If child dir has .reeree/plan.md, it loads that plan."""
+        """If child dir has .reeree/plan.yaml, it loads that plan."""
         sub = tmp_path / "child"
         sub.mkdir()
         child_plan = Plan(intent="child work", steps=[Step(description="child step")])
-        child_plan.save(sub / ".reeree" / "plan.md")
+        child_plan.save(sub / ".reeree" / "plan.yaml")
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
             app._change_scope("child")

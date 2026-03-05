@@ -28,7 +28,7 @@ def _cfg() -> Config:
     c.api_key = "test-key-for-testing"
     c.autonomy = "medium"
     c.project_dir = "."
-    c.plan_file = ".reeree/plan.md"
+    c.plan_file = ".reeree/plan.yaml"
     c.max_context_tokens = 24000
     c.models = {}
     c.routing = {}
@@ -102,7 +102,7 @@ class TestFullWorkflow:
 
             # 5. save plan
             await _cmd(app, pilot, "w")
-            plan_file = tmp_path / ".reeree" / "plan.md"
+            plan_file = tmp_path / ".reeree" / "plan.yaml"
             assert plan_file.exists()
             assert "fix the scraper bugs" in plan_file.read_text()
 
@@ -404,7 +404,7 @@ class TestPlanManipulation:
         async with app.run_test(size=(120, 40)) as pilot:
             await app.execute_command("w")
             await pilot.pause()
-            plan_path = tmp_path / ".reeree" / "plan.md"
+            plan_path = tmp_path / ".reeree" / "plan.yaml"
             assert plan_path.exists()
             content = plan_path.read_text()
             assert "fix the scraper bugs" in content

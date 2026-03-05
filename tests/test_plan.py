@@ -94,13 +94,100 @@ class TestPlanMarkdown:
             Step(description="Step one"),
             Step(description="Step two", status="done"),
         ])
-        path = tmp_path / "plan.md"
+        path = tmp_path / "plan.yaml"
         plan.save(path)
         assert path.exists()
 
         loaded = Plan.load(path)
         assert loaded.intent == "test save"
         assert len(loaded.steps) == 2
+
+
+class TestPlanYAML:
+    def test_to_yaml_basic(self):
+        plan = Plan(intent="fix bugs", steps=[
+            Step(description="Fix the crash"),
+            Step(description="Add tests", status="done", commit_hash="abc1234"),
+        ])
+        y = plan.to_yaml()
+        assert "intent: fix bugs" in y
+        assert "Fix the crash" in y
+        assert "abc1234" in y
+
+    def test_from_yaml_roundtrip(self):
+        original = Plan(intent="add tests", steps=[
+            Step(description="Write unit tests", annotations=["use pytest"]),
+            Step(description="Write integration tests", status="done", commit_hash="def5678"),
+            Step(description="Set up CI", files=["ci.yml", "Makefile"]),
+        ])
+        y = original.to_yaml()
+        restored = Plan.from_yaml(y)
+        assert restored.intent == original.intent
+        assert len(restored.steps) == 3
+        assert restored.steps[0].annotations == ["use pytest"]
+        assert restored.steps[1].status == "done"
+        assert restored.steps[1].commit_hash == "def5678"
+        assert restored.steps[2].files == ["ci.yml", "Makefile"]
+
+    def test_from_yaml_preserves_all_fields(self):
+        original = Plan(intent="test all", steps=[
+            Step(
+                description="Do thing",
+                status="active",
+                annotations=["hint 1", "done: tests pass"],
+                files=["a.py"],
+                commit_hash="abc1234",
+                daemon_id=3,
+                error="something broke",
+            ),
+        ])
+        y = original.to_yaml()
+        restored = Plan.from_yaml(y)
+        s = restored.steps[0]
+        assert s.description == "Do thing"
+        assert s.status == "active"
+        assert s.annotations == ["hint 1", "done: tests pass"]
+        assert s.files == ["a.py"]
+        assert s.commit_hash == "abc1234"
+        assert s.daemon_id == 3
+        assert s.error == "something broke"
+
+    def test_from_yaml_simple_string_steps(self):
+        y = "intent: quick\nsteps:\n  - do this\n  - do that\n"
+        plan = Plan.from_yaml(y)
+        assert len(plan.steps) == 2
+        assert plan.steps[0].description == "do this"
+        assert plan.steps[0].status == "pending"
+
+    def test_empty_yaml(self):
+        plan = Plan(intent="", steps=[])
+        y = plan.to_yaml()
+        restored = Plan.from_yaml(y)
+        assert restored.intent == ""
+        assert len(restored.steps) == 0
+
+    def test_load_detects_yaml(self, tmp_path):
+        plan = Plan(intent="yaml test", steps=[Step(description="step 1")])
+        path = tmp_path / "plan.yaml"
+        plan.save(path)
+        loaded = Plan.load(path)
+        assert loaded.intent == "yaml test"
+
+    def test_load_detects_markdown(self, tmp_path):
+        """Backward compat: load() still reads old markdown plan files."""
+        md = "# Plan: legacy\n\n- [ ] Step 1: old step\n"
+        path = tmp_path / "plan.md"
+        path.write_text(md)
+        loaded = Plan.load(path)
+        assert loaded.intent == "legacy"
+        assert len(loaded.steps) == 1
+
+    def test_save_writes_yaml(self, tmp_path):
+        plan = Plan(intent="test save format", steps=[Step(description="s1")])
+        path = tmp_path / "plan.yaml"
+        plan.save(path)
+        content = path.read_text()
+        assert content.startswith("intent:")
 
 
 class TestPlanProperties:

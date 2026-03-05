@@ -43,7 +43,7 @@ def main(ctx, intent, model, api_base, api_key, autonomy, project, setup):
     config.autonomy = autonomy
 
     # Load or create plan
-    plan_path = project_dir / ".reeree" / "plan.md"
+    plan_path = project_dir / ".reeree" / "plan.yaml"
     plan = None
 
     if intent:

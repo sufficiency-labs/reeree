@@ -41,6 +41,7 @@ High-level decisions about *how* we build. Each ADR references the values it ser
 | [ADR-008](strategic/decisions/ADR-008-propagate-cohere.md) | Propagate and cohere commands | Implemented | Plan Is the Interface |
 | [ADR-009](strategic/decisions/ADR-009-plugin-architecture.md) | Plugin architecture | Proposed | Sufficiency, Delegated Agency |
 | [ADR-010](strategic/decisions/ADR-010-inter-daemon-communication.md) | Inter-daemon communication | Proposed | Overlap Not Turn-Taking, Plan Is the Interface |
+| [ADR-011](strategic/decisions/ADR-011-subrepo-scope-as-lexical-binding.md) | Subrepo scope as lexical binding | Accepted | Focused Context, Plan Is the Interface |
 
 ---
 
@@ -60,7 +61,8 @@ docs/
 │   ├── ADR-007-orchestrator-llm.md
 │   ├── ADR-008-propagate-cohere.md
 │   ├── ADR-009-plugin-architecture.md
-│   └── ADR-010-inter-daemon-communication.md
+│   ├── ADR-010-inter-daemon-communication.md
+│   └── ADR-011-subrepo-scope-as-lexical-binding.md
 │
 └── GASTOWN_COMPARISON.md              # Comparative analysis
 ```

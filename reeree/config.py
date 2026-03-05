@@ -32,7 +32,7 @@ class Config:
 
     # Project settings
     project_dir: str = "."
-    plan_file: str = ".reeree/plan.md"
+    plan_file: str = ".reeree/plan.yaml"
 
     # Context settings
     max_context_tokens: int = 24000  # leave room in 32K window

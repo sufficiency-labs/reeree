@@ -46,8 +46,9 @@ All ADRs are standalone files in [`docs/strategic/decisions/`](docs/strategic/de
 | [ADR-008](docs/strategic/decisions/ADR-008-propagate-cohere.md) | Propagate and cohere commands | Implemented | Plan Is Interface |
 | [ADR-009](docs/strategic/decisions/ADR-009-plugin-architecture.md) | Plugin architecture | Proposed | Sufficiency, Agency |
 | [ADR-010](docs/strategic/decisions/ADR-010-inter-daemon-communication.md) | Inter-daemon communication | Proposed | Overlap, Plan Is Interface |
+| [ADR-011](docs/strategic/decisions/ADR-011-subrepo-scope-as-lexical-binding.md) | Subrepo scope as lexical binding | Accepted | Focused Context, Plan Is Interface |
 
-## Current State (as of 2026-03-04)
+## Current State (as of 2026-03-05)
 
 ### What's Built
 
@@ -117,13 +118,13 @@ All state lives on disk as plain text:
 └── sessions/
     └── <session-id>/
         ├── state.json        # Session state (daemons, status)
-        └── plan.md           # The plan file
+        └── plan.yaml         # The plan file (YAML format)
 
 <project>/.reeree/            # Per-project state
 ├── config.json               # Project-specific overrides
 ├── plugins.json              # Plugin enable/disable + settings
 ├── session.json              # Session state for persistence/recovery
-└── plan.md                   # Current plan (symlink or copy)
+└── plan.yaml                 # Current plan (YAML canonical format)
 ```
 
 ---

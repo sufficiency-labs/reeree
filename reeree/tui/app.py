@@ -69,14 +69,14 @@ class PlanEditor(TextArea):
         was_readonly = self.read_only
         self.read_only = False
         if self.vim_mode == "INSERT":
-            self.text = plan.to_markdown()
+            self.text = plan.to_yaml()
         else:
             self.text = plan.to_rich_display()
         self.read_only = was_readonly
 
     def get_plan(self) -> Plan:
         if self.vim_mode == "INSERT":
-            return Plan.from_markdown(self.text)
+            return Plan.from_yaml(self.text)
         else:
             return Plan.from_rich_display(self.text)
 
@@ -120,12 +120,12 @@ class PlanEditor(TextArea):
         return step_idx if step_idx >= 0 else None
 
     def _enter_insert_mode(self) -> None:
-        # Swap to raw markdown for editing
+        # Swap to raw YAML for editing
         try:
             plan = self.get_plan()  # parse from rich display
             self.read_only = False
             self.vim_mode = "INSERT"
-            self.text = plan.to_markdown()  # now in markdown
+            self.text = plan.to_yaml()  # editable YAML
         except Exception:
             self.read_only = False
             self.vim_mode = "INSERT"
@@ -135,9 +135,9 @@ class PlanEditor(TextArea):
             app._flog.debug("Mode: INSERT")
 
     def _enter_normal_mode(self) -> None:
-        # Parse markdown edits, swap back to rich display
+        # Parse YAML edits, swap back to rich display
         try:
-            plan = Plan.from_markdown(self.text)  # parse markdown edits
+            plan = Plan.from_yaml(self.text)  # parse YAML edits
             self.read_only = True
             self.vim_mode = "NORMAL"
             self.text = plan.to_rich_display()  # rich display
@@ -856,7 +856,7 @@ class ReereeApp(App):
         self._chat_target = "executor"
 
         # Load plan from new scope if it exists
-        new_plan_path = new_dir / ".reeree" / "plan.md"
+        new_plan_path = new_dir / ".reeree" / "plan.yaml"
         if new_plan_path.exists():
             self.plan = Plan.load(new_plan_path)
         else:
@@ -1530,7 +1530,7 @@ class ReereeApp(App):
     def _save_plan(self) -> None:
         editor = self.query_one("#plan-editor", PlanEditor)
         self.plan = editor.get_plan()
-        plan_path = self.project_dir / ".reeree" / "plan.md"
+        plan_path = self.project_dir / ".reeree" / "plan.yaml"
         self.plan.save(plan_path)
 
     def _add_step(self, description: str) -> None:

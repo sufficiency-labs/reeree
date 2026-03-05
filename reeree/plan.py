@@ -1,8 +1,14 @@
-"""Plan management — the shared steering document / work queue."""
+"""Plan management — the shared steering document / work queue.
+
+Data model: Plan and Step dataclasses.
+Disk format: YAML (plan.yaml). The checklist is a *view* of the data.
+Display: rich unicode indicators for NORMAL mode, raw YAML for INSERT mode.
+"""
 
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
+import yaml
 
 
 @dataclass
@@ -321,15 +327,74 @@ class Plan:
 
         return cls(intent=intent, steps=steps)
 
+    def to_yaml(self) -> str:
+        """Serialize plan as YAML — the canonical disk format."""
+        data = {
+            "intent": self.intent,
+            "steps": [],
+        }
+        for step in self.steps:
+            s: dict = {"description": step.description, "status": step.status}
+            if step.annotations:
+                s["annotations"] = step.annotations
+            if step.files:
+                s["files"] = step.files
+            if step.commit_hash:
+                s["commit"] = step.commit_hash
+            if step.daemon_id is not None:
+                s["daemon"] = step.daemon_id
+            if step.error:
+                s["error"] = step.error
+            data["steps"].append(s)
+        return yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    @classmethod
+    def from_yaml(cls, text: str) -> "Plan":
+        """Parse plan from YAML."""
+        data = yaml.safe_load(text)
+        if not isinstance(data, dict):
+            return cls(intent="", steps=[])
+        intent = data.get("intent", "")
+        steps = []
+        for s in data.get("steps", []):
+            if isinstance(s, str):
+                # Simple string step: "do the thing"
+                steps.append(Step(description=s))
+            elif isinstance(s, dict):
+                steps.append(Step(
+                    description=s.get("description", ""),
+                    status=s.get("status", "pending"),
+                    annotations=s.get("annotations", []),
+                    files=s.get("files", []),
+                    commit_hash=s.get("commit"),
+                    daemon_id=s.get("daemon"),
+                    error=s.get("error"),
+                ))
+        return cls(intent=intent, steps=steps)
+
     def save(self, path: Path) -> None:
-        """Write plan to file."""
+        """Write plan to file as YAML."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.to_markdown())
+        # Use .yaml extension if possible, but respect whatever path is given
+        path.write_text(self.to_yaml())
 
     @classmethod
     def load(cls, path: Path) -> "Plan":
-        """Load plan from file."""
-        return cls.from_markdown(path.read_text())
+        """Load plan from file. Detects YAML or markdown format."""
+        text = path.read_text()
+        # YAML files start with "intent:" or are valid YAML dicts
+        # Markdown files start with "# Plan:" or "- ["
+        if text.strip().startswith(("intent:", "---")):
+            return cls.from_yaml(text)
+        # Try YAML parse first (handles both formats)
+        try:
+            data = yaml.safe_load(text)
+            if isinstance(data, dict) and "intent" in data:
+                return cls.from_yaml(text)
+        except Exception:
+            pass
+        # Fall back to markdown
+        return cls.from_markdown(text)
 
     @property
     def pending_steps(self) -> list[tuple[int, Step]]:
