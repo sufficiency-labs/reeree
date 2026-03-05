@@ -6,8 +6,11 @@ from .llm import chat
 from .plan import Plan, Step
 from .config import Config
 from .context import find_relevant_files
+from .voice import VOICE
 
-PLANNER_SYSTEM = """Task decomposition. Given intent and project context, produce concrete atomic steps.
+PLANNER_SYSTEM = f"""{VOICE}
+
+Task decomposition. Given intent and project context, produce concrete atomic steps.
 
 Rules:
 - Each step should be small enough to execute in one focused LLM call

@@ -15,6 +15,7 @@ from textual import events, on
 from ..config import Config
 from ..daemon_registry import DaemonRegistry, DaemonKind, DaemonStatus
 from ..plan import Plan
+from ..voice import VOICE
 from .daemon_tree import DaemonTreeView
 
 
@@ -997,9 +998,8 @@ class ReereeApp(App):
             import json as _json
 
             system = (
-                "Setup daemon. Configure LLM provider, model, autonomy, context budget.\n"
-                "Voice: ship's computer — direct, informational, no hedging.\n"
-                "No 'I think', 'I suggest', 'Great choice!' — just state the configuration.\n\n"
+                f"{VOICE}\n\n"
+                "Setup daemon. Configure LLM provider, model, autonomy, context budget.\n\n"
                 "When the user expresses a preference, respond with:\n"
                 "1. Brief confirmation of what was understood\n"
                 "2. A ```config block with the JSON configuration\n\n"
@@ -1111,8 +1111,8 @@ class ReereeApp(App):
                     daemon_history += f"\n--- Daemon {daemon.id} ---\n{daemon.log[-500:]}\n"
 
             system = (
+                f"{VOICE}\n\n"
                 f"Executor daemon. You execute actions AND respond conversationally.\n"
-                f"Voice: ship's computer — direct, informational, no hedging.\n"
                 f"ALWAYS include natural language alongside action blocks. The user reads your\n"
                 f"text responses — empty responses with only action blocks are bad UX.\n"
                 f"Describe what you're doing, what you found, what happened. Be concise but present.\n\n"
@@ -2051,9 +2051,9 @@ class ReereeApp(App):
             return
 
         system = (
+            f"{VOICE}\n\n"
             "Coherence daemon. Read documents, identify contradictions, stale references,\n"
             "inconsistencies, and gaps.\n\n"
-            "Voice: ship's computer — report findings directly. No preamble.\n\n"
             "For each issue: location (doc + section), issue (what's wrong), fix (how to resolve).\n"
             "Focus on factual contradictions and structural issues, not style.\n"
             "If everything is coherent, say so in one line.\n"

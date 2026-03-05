@@ -19,16 +19,16 @@ from .context import gather_context
 from .llm import chat_async
 from .router import route_model
 from .executor import run_shell, write_file, edit_file, git_commit, ExecResult
+from .voice import VOICE
 
 
 MAX_TURNS = 10  # Safety limit — daemon can't loop forever
 
 
-EXECUTOR_SYSTEM = """Step execution daemon. Multi-turn action loop: respond with actions,
-see results, respond again. Continue until the step is DONE.
+EXECUTOR_SYSTEM = f"""{VOICE}
 
-Voice: ship's computer — direct, informational, no hedging. Report what you did and what
-happened, not what you're "going to" do. No "I think", "I'll try", "Let me". Just act.
+Step execution daemon. Multi-turn action loop: respond with actions,
+see results, respond again. Continue until the step is DONE.
 
 RESPOND WITH VALID YAML ONLY. No markdown, no explanation, no text outside the YAML.
 
