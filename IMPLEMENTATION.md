@@ -47,6 +47,9 @@ All ADRs are standalone files in [`docs/strategic/decisions/`](docs/strategic/de
 | [ADR-009](docs/strategic/decisions/ADR-009-plugin-architecture.md) | Plugin architecture | Proposed | Sufficiency, Agency |
 | [ADR-010](docs/strategic/decisions/ADR-010-inter-daemon-communication.md) | Inter-daemon communication | Proposed | Overlap, Plan Is Interface |
 | [ADR-011](docs/strategic/decisions/ADR-011-subrepo-scope-as-lexical-binding.md) | Subrepo scope as lexical binding | Accepted | Focused Context, Plan Is Interface |
+| [ADR-012](docs/strategic/decisions/ADR-012-daemon-personality-evolution.md) | Daemon personality evolution | Proposed | Delegated Agency, No Anthropomorphism |
+| [ADR-013](docs/strategic/decisions/ADR-013-pluggable-execution-backends.md) | Pluggable execution backends | Proposed | Sufficiency, No Lock-in |
+| [ADR-014](docs/strategic/decisions/ADR-014-simplified-technical-english.md) | Simplified Technical English default voice | Proposed | No Anthropomorphism, Sufficiency |
 
 ## Current State (as of 2026-03-05)
 

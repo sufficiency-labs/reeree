@@ -26,6 +26,9 @@ class Config:
     model: str = "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
     api_key: str = ""
 
+    # Default multi-model routing (Together.ai)
+    # Override by setting models + routing in .reeree/config.json
+
     # Autonomy level: low = approve everything, medium = auto-approve reads,
     # high = auto-approve reads+writes, full = auto-approve all
     autonomy: str = "medium"

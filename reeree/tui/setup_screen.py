@@ -17,7 +17,22 @@ from ..config import Config
 _PROVIDERS = [
     ("together.ai", "https://api.together.xyz/v1", "TOGETHER_API_KEY"),
     ("openai", "https://api.openai.com/v1", "OPENAI_API_KEY"),
+    ("gemini", "https://generativelanguage.googleapis.com/v1beta", "GEMINI_API_KEY"),
     ("ollama (local)", "http://localhost:11434/v1", None),
+]
+
+# Recommended models per tier (Together.ai)
+_RECOMMENDED_MODELS = {
+    "coding": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+    "reasoning": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+    "fast": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+}
+
+# Available execution backends to detect
+_BACKENDS = [
+    ("claude", "claude"),
+    ("aider", "aider"),
+    ("codex", "codex"),
 ]
 
 
@@ -87,11 +102,25 @@ class SetupScreen(ModalScreen[Config]):
                 id="api-base-input",
             )
 
-            yield Static("[bold]Model[/bold]", classes="setup-label")
+            yield Static("[bold]Model (coding tier)[/bold]", classes="setup-label")
             yield Input(
                 value=self._config.model,
-                placeholder="Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+                placeholder=_RECOMMENDED_MODELS["coding"],
                 id="model-input",
+            )
+
+            yield Static("[bold]Reasoning model[/bold] (coherence, planning)", classes="setup-label")
+            yield Input(
+                value=self._config.models.get("reasoning", {}).get("model", _RECOMMENDED_MODELS["reasoning"]),
+                placeholder=_RECOMMENDED_MODELS["reasoning"],
+                id="reasoning-model-input",
+            )
+
+            yield Static("[bold]Fast model[/bold] (reads, checks, status)", classes="setup-label")
+            yield Input(
+                value=self._config.models.get("fast", {}).get("model", _RECOMMENDED_MODELS["fast"]),
+                placeholder=_RECOMMENDED_MODELS["fast"],
+                id="fast-model-input",
             )
 
             yield Static("[bold]Autonomy[/bold]", classes="setup-label")
@@ -114,18 +143,26 @@ class SetupScreen(ModalScreen[Config]):
         self._probe_apis()
 
     def _probe_apis(self) -> None:
-        """Probe known API providers and show results."""
-        status_lines = []
+        """Probe known API providers and execution backends."""
+        import os
+        import shutil
+        status_lines = ["[bold]API providers:[/bold]"]
         for name, base, env_var in _PROVIDERS:
-            import os
             key = os.environ.get(env_var, "") if env_var else ""
             available = _probe_provider(base, key)
             self._detected[name] = available
             icon = "[green]OK[/green]" if available else "[dim]--[/dim]"
             status_lines.append(f"  {icon} {name}")
 
+        status_lines.append("\n[bold]Execution backends:[/bold]")
+        for name, binary in _BACKENDS:
+            found = shutil.which(binary) is not None
+            self._detected[f"backend:{name}"] = found
+            icon = "[green]OK[/green]" if found else "[dim]--[/dim]"
+            status_lines.append(f"  {icon} {name}")
+
         status = self.query_one("#setup-status", Static)
-        status.update("Detected providers:\n" + "\n".join(status_lines))
+        status.update("\n".join(status_lines))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save-btn":
@@ -135,6 +172,8 @@ class SetupScreen(ModalScreen[Config]):
         api_key = self.query_one("#api-key-input", Input).value.strip()
         api_base = self.query_one("#api-base-input", Input).value.strip()
         model = self.query_one("#model-input", Input).value.strip()
+        reasoning_model = self.query_one("#reasoning-model-input", Input).value.strip()
+        fast_model = self.query_one("#fast-model-input", Input).value.strip()
 
         # Autonomy
         autonomy_map = {0: "low", 1: "medium", 2: "high", 3: "full"}
@@ -146,12 +185,30 @@ class SetupScreen(ModalScreen[Config]):
         context_radio = self.query_one("#context-radio", RadioSet)
         max_context = context_map.get(context_radio.pressed_index, 24000)
 
+        effective_base = api_base or self._config.api_base
+        effective_key = api_key or self._config.api_key
+
+        # Build multi-model routing
+        models = {}
+        routing = {}
+        if reasoning_model:
+            models["reasoning"] = {"model": reasoning_model, "api_base": effective_base, "api_key": effective_key}
+            routing["reasoning"] = "reasoning"
+        if model:
+            models["coding"] = {"model": model, "api_base": effective_base, "api_key": effective_key}
+            routing["coding"] = "coding"
+        if fast_model:
+            models["fast"] = {"model": fast_model, "api_base": effective_base, "api_key": effective_key}
+            routing["fast"] = "fast"
+
         config = Config(
-            api_key=api_key or self._config.api_key,
-            api_base=api_base or self._config.api_base,
+            api_key=effective_key,
+            api_base=effective_base,
             model=model or self._config.model,
             autonomy=autonomy,
             max_context_tokens=max_context,
+            models=models,
+            routing=routing,
         )
 
         self.dismiss(config)

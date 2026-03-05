@@ -42,6 +42,9 @@ High-level decisions about *how* we build. Each ADR references the values it ser
 | [ADR-009](strategic/decisions/ADR-009-plugin-architecture.md) | Plugin architecture | Proposed | Sufficiency, Delegated Agency |
 | [ADR-010](strategic/decisions/ADR-010-inter-daemon-communication.md) | Inter-daemon communication | Proposed | Overlap Not Turn-Taking, Plan Is the Interface |
 | [ADR-011](strategic/decisions/ADR-011-subrepo-scope-as-lexical-binding.md) | Subrepo scope as lexical binding | Accepted | Focused Context, Plan Is the Interface |
+| [ADR-012](strategic/decisions/ADR-012-daemon-personality-evolution.md) | Daemon personality evolution | Proposed | Delegated Agency, No Anthropomorphism |
+| [ADR-013](strategic/decisions/ADR-013-pluggable-execution-backends.md) | Pluggable execution backends | Proposed | Sufficiency, No Lock-in |
+| [ADR-014](strategic/decisions/ADR-014-simplified-technical-english.md) | STE default voice spec | Proposed | No Anthropomorphism, Sufficiency |
 
 ---
 
@@ -62,8 +65,12 @@ docs/
 │   ├── ADR-008-propagate-cohere.md
 │   ├── ADR-009-plugin-architecture.md
 │   ├── ADR-010-inter-daemon-communication.md
-│   └── ADR-011-subrepo-scope-as-lexical-binding.md
+│   ├── ADR-011-subrepo-scope-as-lexical-binding.md
+│   ├── ADR-012-daemon-personality-evolution.md
+│   ├── ADR-013-pluggable-execution-backends.md
+│   └── ADR-014-simplified-technical-english.md
 │
+├── claude-code-gap-analysis.md        # Usage pattern analysis
 └── GASTOWN_COMPARISON.md              # Comparative analysis
 ```
 
