@@ -1,8 +1,21 @@
-"""Context management — load only what's needed for the current step."""
+"""Context management — load only what's needed for the current step.
 
+Cross-reference following: documents link to each other via markdown links
+and ## Related sections. We parse those links, resolve paths, and load
+referenced files into context within the char budget.
+"""
+
+import re
 import subprocess
 from pathlib import Path
 from .plan import Step
+
+
+# Markdown link pattern: [text](path) — relative paths only, not URLs
+_LINK_RE = re.compile(r'\[([^\]]*)\]\(([^)]+)\)')
+
+# Related section pattern: ## Related People, ## Related Ideas, etc.
+_RELATED_SECTION_RE = re.compile(r'^##\s+Related\s+', re.MULTILINE)
 
 
 def _find_parent_contexts(project_dir: Path) -> list[tuple[str, str]]:
@@ -28,47 +41,133 @@ def _find_parent_contexts(project_dir: Path) -> list[tuple[str, str]]:
     return results
 
 
-def gather_context(step: Step, project_dir: Path, max_chars: int = 80000) -> str:
+def extract_cross_references(text: str, base_dir: Path) -> list[Path]:
+    """Extract resolvable file paths from markdown cross-references.
+
+    Finds:
+    - [text](relative/path) markdown links (skips URLs, anchors)
+    - Paths in ## Related * sections
+
+    Returns resolved Paths that exist on disk.
+    """
+    refs = []
+    seen = set()
+
+    for match in _LINK_RE.finditer(text):
+        link_target = match.group(2).strip()
+
+        # Skip URLs, anchors, images
+        if link_target.startswith(("http://", "https://", "#", "mailto:")):
+            continue
+
+        # Strip anchor from path (e.g., "file.md#section")
+        path_part = link_target.split("#")[0]
+        if not path_part:
+            continue
+
+        resolved = (base_dir / path_part).resolve()
+
+        # If it's a directory, look for README.md inside it
+        if resolved.is_dir():
+            readme = resolved / "README.md"
+            if readme.exists():
+                resolved = readme
+
+        if resolved.is_file() and str(resolved) not in seen:
+            seen.add(str(resolved))
+            refs.append(resolved)
+
+    return refs
+
+
+def gather_context(step: Step, project_dir: Path, max_chars: int = 80000,
+                   follow_references: bool = True) -> str:
     """Build a focused context string for one step.
 
     Instead of loading the entire repo into context (the 200K crutch),
     we load only the files relevant to this specific step.
+
+    When follow_references=True, also follows markdown links in loaded
+    documents (one level deep) to pull in cross-referenced files.
     """
     parts = []
     total = 0
+    loaded_paths: set[str] = set()  # track what's loaded to avoid duplicates
+
+    def _add_content(label: str, content: str, path: str = "") -> bool:
+        """Add content if within budget. Returns True if added."""
+        nonlocal total
+        if path and path in loaded_paths:
+            return False
+        if total + len(content) >= max_chars:
+            return False
+        parts.append(f"=== {label} ===\n{content}")
+        total += len(content)
+        if path:
+            loaded_paths.add(path)
+        return True
 
     # Walk up to find parent repo context (subrepo telescoping)
-    # If we're in private/kingfall, also grab vorkosigan-level CLAUDE.md
     parent_contexts = _find_parent_contexts(project_dir)
     for label, content in parent_contexts:
-        if total + len(content) < max_chars:
-            parts.append(f"=== {label} ===\n{content}")
-            total += len(content)
+        _add_content(label, content)
 
-    # Project-level context
+    # Project-level context — collect for cross-reference scanning
+    project_files_content: list[tuple[str, str, Path]] = []
     for ctx_file in ["CLAUDE.md", "README.md", ".reeree/config.json"]:
         p = project_dir / ctx_file
         if p.exists():
             content = p.read_text()
-            if total + len(content) < max_chars:
-                parts.append(f"=== {ctx_file} ===\n{content}")
-                total += len(content)
+            if _add_content(ctx_file, content, str(p.resolve())):
+                project_files_content.append((ctx_file, content, p))
 
     # Load files specified in the step
+    step_files_content: list[tuple[str, str, Path]] = []
     for file_path in step.files:
         p = project_dir / file_path
         if p.exists() and p.is_file():
             content = p.read_text()
             if total + len(content) < max_chars:
-                parts.append(f"=== {file_path} ===\n{content}")
-                total += len(content)
+                if _add_content(file_path, content, str(p.resolve())):
+                    step_files_content.append((file_path, content, p))
             else:
-                # Truncate if too large
                 remaining = max_chars - total
                 if remaining > 500:
                     parts.append(f"=== {file_path} (truncated) ===\n{content[:remaining]}")
                     total = max_chars
+                    loaded_paths.add(str(p.resolve()))
                 break
+
+    # Cross-reference following — one level deep
+    if follow_references and total < max_chars:
+        # Budget for cross-references: up to 25% of remaining space
+        xref_budget = (max_chars - total) // 4
+
+        all_loaded = project_files_content + step_files_content
+        xref_total = 0
+
+        for label, content, file_path in all_loaded:
+            if xref_total >= xref_budget:
+                break
+
+            refs = extract_cross_references(content, file_path.parent)
+            for ref_path in refs:
+                if xref_total >= xref_budget:
+                    break
+                if str(ref_path) in loaded_paths:
+                    continue
+                try:
+                    ref_content = ref_path.read_text()
+                except Exception:
+                    continue
+
+                # Cap individual cross-ref files at 5K chars
+                if len(ref_content) > 5000:
+                    ref_content = ref_content[:5000] + "\n... (truncated)"
+
+                ref_label = f"xref:{ref_path.name}"
+                if _add_content(ref_label, ref_content, str(ref_path)):
+                    xref_total += len(ref_content)
 
     return "\n\n".join(parts)
 
