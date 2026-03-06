@@ -21,10 +21,16 @@ def _load_api_key() -> str:
 class Config:
     """Runtime configuration."""
 
-    # LLM settings — defaults to best available on Together.ai
+    # Backend: "together" (OpenAI-compatible API) or "claude-code" (subprocess)
+    backend: str = "together"
+
+    # LLM settings (for "together" backend)
     api_base: str = "https://api.together.xyz/v1"
     model: str = "deepseek-ai/DeepSeek-V3.1"
     api_key: str = ""
+
+    # Claude Code settings (for "claude-code" backend)
+    claude_model: str = "sonnet"  # sonnet, opus, haiku
 
     # Autonomy level: low = approve everything, medium = auto-approve reads,
     # high = auto-approve reads+writes, full = auto-approve all

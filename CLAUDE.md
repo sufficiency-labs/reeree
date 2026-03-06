@@ -21,9 +21,10 @@ All daemon output defaults to ship's-computer tone — direct, informational, co
 ```
 reeree/
 ├── cli.py             # Entry point — Click CLI
-├── config.py          # Configuration — single model + multi-model routing
+├── claude_backend.py  # Claude Code subprocess backend (--resume persistence)
+├── config.py          # Configuration — backend, models, routing
 ├── context.py         # Focused context assembly per step
-├── daemon_executor.py # Multi-turn LLM conversation (read→edit→verify loop)
+├── daemon_executor.py # Together.ai/OpenAI multi-turn LLM conversation
 ├── daemon_registry.py # Daemon lifecycle — DaemonRegistry, DaemonKind, DaemonStatus
 ├── executor.py        # File edits, shell commands, git ops, safety classification
 ├── llm.py             # LLM API — OpenAI-compatible httpx calls
@@ -62,6 +63,20 @@ When invoked with no arguments, `cli.py` discovers the default document:
 4. `README.md`
 
 The discovered doc opens in the file viewer. `.reeree/plan.yaml` always loads as the execution queue regardless of which document is active. Explicit targets (`reeree essay.md`) override discovery.
+
+## Backends
+
+Two execution backends, switchable via `config.backend` or `:set backend`:
+
+### Together.ai / OpenAI-compatible (`backend: "together"`)
+Default. Uses `llm.py` + `daemon_executor.py`. The daemon calls an OpenAI-compatible API, gets YAML action responses, and executes them locally via `executor.py`. Multi-turn loop: LLM → parse YAML → execute actions → feed results back.
+
+### Claude Code subprocess (`backend: "claude-code"`)
+Each daemon is a persistent Claude Code session. Spawns `claude -p` with `--output-format json`. Claude Code handles file operations, shell commands, and search natively — no YAML action parsing needed. Sessions persist via `--resume <session_id>`, stored on `Daemon.session_id`.
+
+Config fields: `backend` ("together" | "claude-code"), `claude_model` ("sonnet" | "opus" | "haiku").
+
+Runtime: `:set backend claude-code`, `:set claude-model opus`.
 
 ## Key Patterns
 

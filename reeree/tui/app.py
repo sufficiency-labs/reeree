@@ -1473,11 +1473,16 @@ class ReereeApp(App):
         response. The block contents replace the current plan markdown, the
         editor updates live, and the plan is saved to disk.
         """
+        self._chat_busy = True
+
+        # Route to Claude Code backend if configured
+        if self.config.backend == "claude-code":
+            await self._chat_respond_claude(user_msg)
+            return
+
         from ..llm import chat_async
         from ..context import gather_context
         from ..plan import Step, Plan
-
-        self._chat_busy = True
 
         try:
             # Build system prompt with project context
@@ -1611,6 +1616,60 @@ class ReereeApp(App):
             # Keep message history manageable
             if len(self._chat_messages) > 40:
                 self._chat_messages = self._chat_messages[-40:]
+
+        except Exception as e:
+            self._exec_write(f"[red]Chat error: {e}[/red]")
+            self._flog.error(f"Chat error: {e}")
+            if chat_daemon:
+                chat_daemon.status = DaemonStatus.FAILED
+                chat_daemon.error = str(e)
+        finally:
+            self._chat_busy = False
+            if chat_daemon and chat_daemon.is_active:
+                chat_daemon.status = DaemonStatus.DONE
+
+    async def _chat_respond_claude(self, user_msg: str) -> None:
+        """Chat via Claude Code subprocess with persistent session."""
+        from ..claude_backend import chat_claude
+
+        chat_daemon = None
+        try:
+            plan_md = self.plan.to_markdown()
+
+            chat_daemon = self._daemon_registry.spawn(
+                DaemonKind.EXECUTOR, user_msg[:50],
+                scope=str(self.project_dir.name),
+            )
+
+            # Reuse session_id from previous chat daemon if available
+            session_id = getattr(self, "_claude_chat_session_id", "")
+
+            def on_log(msg):
+                self._flog.info(msg)
+
+            result = await chat_claude(
+                user_msg=user_msg,
+                project_dir=self.project_dir,
+                config=self.config,
+                on_log=on_log,
+                session_id=session_id,
+                plan_context=plan_md,
+            )
+
+            # Persist session for next chat turn
+            if result.get("session_id"):
+                self._claude_chat_session_id = result["session_id"]
+                chat_daemon.session_id = result["session_id"]
+
+            response_text = result.get("result", "")
+            if response_text.strip():
+                self._exec_write(f"{self._chat_target}: {response_text}")
+            else:
+                self._exec_write(f"[dim]{self._chat_target}: (no response)[/dim]")
+
+            cost = result.get("cost", 0)
+            if cost:
+                self._flog.info(f"Chat cost: ${cost:.4f}")
 
         except Exception as e:
             self._exec_write(f"[red]Chat error: {e}[/red]")
@@ -2185,6 +2244,15 @@ class ReereeApp(App):
                 self._exec_write(f"Autonomy → {value}")
             else:
                 self.notify("Autonomy must be: low, medium, high, full", severity="error")
+        elif key == "backend":
+            if value in ("together", "claude-code"):
+                self.config.backend = value
+                self._exec_write(f"Backend → {value}")
+            else:
+                self.notify("Backend must be: together, claude-code", severity="error")
+        elif key == "claude-model":
+            self.config.claude_model = value
+            self._exec_write(f"Claude model → {value}")
         else:
             self.notify(f"Unknown option: {key}", severity="error")
 
@@ -2296,8 +2364,6 @@ class ReereeApp(App):
         # In edit modes, don't touch the TextArea — StatusOverlay handles merge
 
     async def _run_daemon_task(self, daemon_id: int, step, step_id: str) -> None:
-        from ..daemon_executor import dispatch_step
-
         daemon = self._daemon_registry.get(daemon_id)
         step_idx = self.plan.step_index_by_id(step_id)
 
@@ -2305,14 +2371,30 @@ class ReereeApp(App):
             self._daemon_log(did, msg)
 
         try:
-            result = await dispatch_step(
-                step=step,
-                step_index=step_idx if step_idx is not None else 0,
-                project_dir=self.project_dir,
-                config=self.config,
-                on_log=on_log,
-                should_continue=lambda: daemon.is_active if daemon else True,
-            )
+            if self.config.backend == "claude-code":
+                from ..claude_backend import dispatch_step_claude
+                result = await dispatch_step_claude(
+                    step=step,
+                    step_index=step_idx if step_idx is not None else 0,
+                    project_dir=self.project_dir,
+                    config=self.config,
+                    on_log=on_log,
+                    should_continue=lambda: daemon.is_active if daemon else True,
+                    session_id=daemon.session_id if daemon else "",
+                )
+                # Persist session_id for --resume
+                if daemon and result.get("session_id"):
+                    daemon.session_id = result["session_id"]
+            else:
+                from ..daemon_executor import dispatch_step
+                result = await dispatch_step(
+                    step=step,
+                    step_index=step_idx if step_idx is not None else 0,
+                    project_dir=self.project_dir,
+                    config=self.config,
+                    on_log=on_log,
+                    should_continue=lambda: daemon.is_active if daemon else True,
+                )
 
             time_str = daemon.elapsed_str if daemon else "?"
             status = result.get("status", "failed")

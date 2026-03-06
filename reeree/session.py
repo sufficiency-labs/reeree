@@ -140,6 +140,7 @@ def _serialize_registry(registry: DaemonRegistry) -> dict:
                 "step_id": d.step_id,
                 "scope": d.scope,
                 "model": d.model,
+                "session_id": d.session_id,
                 "log": d.log,
                 "error": d.error,
             }
@@ -163,6 +164,7 @@ def _deserialize_registry(data: dict) -> DaemonRegistry:
             step_id=str(d.get("step_id", d.get("step_index", ""))),
             scope=d.get("scope", ""),
             model=d.get("model", ""),
+            session_id=d.get("session_id", ""),
             log=d.get("log", ""),
             error=d.get("error", ""),
         )

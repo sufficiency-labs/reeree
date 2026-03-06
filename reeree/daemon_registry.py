@@ -37,6 +37,7 @@ class Daemon:
     step_id: str = ""
     scope: str = ""
     model: str = ""
+    session_id: str = ""  # Claude Code session ID for --resume persistence
     start_time: float = field(default_factory=time.monotonic)
     last_log_time: float = 0.0
     log: str = ""

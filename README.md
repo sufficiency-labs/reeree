@@ -164,7 +164,7 @@ This works in any markdown file opened with `:file`. The plan is one kind of mac
 
 **Git is undo.** Every completed step is a git commit. `:undo` reverts. Mistakes cost nothing.
 
-**Any model.** ollama local models by default. Any OpenAI-compatible API. No subscriptions required.
+**Two backends.** Together.ai/OpenAI-compatible API for open models (DeepSeek, Qwen, Llama). Or Claude Code as persistent subprocesses — each daemon is a full Claude session with `--resume` for context persistence. `:set backend claude-code` to switch.
 
 **Vim keybindings.** Your muscle memory works.
 
@@ -187,7 +187,8 @@ reeree/
 ├── cli.py              # Entry point
 ├── config.py           # Configuration
 ├── context.py          # Focused context per step
-├── daemon_executor.py  # Multi-turn step execution
+├── claude_backend.py   # Claude Code subprocess backend (--resume persistence)
+├── daemon_executor.py  # Together.ai/OpenAI multi-turn step execution
 ├── daemon_registry.py  # Daemon lifecycle (hierarchy, pause/kill)
 ├── executor.py         # File edits, shell, git, safety
 ├── llm.py              # LLM API (OpenAI-compatible)
