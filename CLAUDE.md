@@ -135,6 +135,36 @@ reeree --project sandbox "add error handling to the scraper"
 - **Values trace to code.** Every ADR has a "Values served" field. See [docs/strategic/decisions/](docs/strategic/decisions/).
 - **Voice spec in voice.py.** All daemon system prompts import `VOICE` from `voice.py` (STE-derived clear prose rules). See [ADR-014](docs/strategic/decisions/ADR-014-simplified-technical-english.md).
 
+## User Workflow Support Matrix
+
+How the primary user's Claude Code patterns map to reeree:
+
+| Pattern | Support | Notes |
+|---------|---------|-------|
+| Machine tasks (`[machine: ...]`) | **Full** | Parse, dispatch, splice results |
+| Claude Code subprocess backend | **Full** | `--resume` persistence, session IDs |
+| Git discipline (commit/push per step) | **Good** | Step commits tracked; needs auto-push |
+| Default doc discovery | **Good** | PROJECT_PLAN > PLAN > README |
+| Multi-turn chat | **Partial** | Chat panel works; no cross-session persistence |
+| Cross-reference context | **Partial** | Reads CLAUDE.md; no link-following |
+| Queued task system | **Partial** | Plan steps exist; no task portfolio/discovery |
+| Session coordination | **None** | No SESSION_*.md awareness |
+| File locking / conflict detection | **None** | No multi-session safety |
+| Autonomous scheduled daemons | **None** | User-driven only (`:go`) |
+| Multi-node sync | **None** | No phone/laptop awareness |
+
+### Key unsupported workflows
+
+**Session coordination** — The vorkosigan pattern creates `coordination/SESSION_*.md` before work, checks for conflicts, marks COMPLETE on exit. reeree doesn't participate in this protocol yet.
+
+**Queued tasks** — Large tasks get filed as self-contained starter packs at `coordination/queued/`. reeree can't discover or import these yet.
+
+**Cross-referencing** — Documents link to each other (`## Related People`, `## Related Ideas`). reeree's context assembly doesn't follow these links.
+
+### What works today
+
+Launch reeree in any repo with Claude Code installed. Write a plan (YAML steps with annotations). `:go` dispatches Claude Code daemons that execute steps with full permissions. Results commit to git. Open any markdown file, add `[machine: ...]` annotations, `:w` to dispatch. Chat with the executor daemon via `:chat`. Switch models with `:set claude-model opus`.
+
 ## Test Droplet
 
 ```bash
