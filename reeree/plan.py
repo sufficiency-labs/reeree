@@ -5,10 +5,24 @@ Disk format: YAML (plan.yaml). The checklist is a *view* of the data.
 Display: rich unicode indicators for NORMAL mode, raw YAML for INSERT mode.
 """
 
+import hashlib
+import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import yaml
+
+
+def _generate_step_id(description: str) -> str:
+    """Generate a short stable ID from description + timestamp.
+
+    Format: first 3 chars of first word + 4 hex chars.
+    Example: "Add retry logic" -> "add-a1b2"
+    """
+    words = description.split()
+    prefix = words[0].lower()[:3] if words else "stp"
+    h = hashlib.sha1(f"{description}{_time.time()}".encode()).hexdigest()[:4]
+    return f"{prefix}-{h}"
 
 
 @dataclass
@@ -19,21 +33,21 @@ class Step:
     ahead of execution — adding annotations, acceptance criteria, file
     hints — while daemons are busy on earlier steps.
 
-    Format on disk:
-        - [ ] Add retry logic to sync.sh
-          > max 3 retries, exponential backoff
-          > files: scripts/sync.sh, scripts/retry.sh
-          > done: retry_test.sh passes
-
-    The `> ` lines are annotations the daemon reads as context.
+    Each step has a stable `id` that survives reordering, insertion, and
+    deletion. Daemons reference steps by ID, not index.
     """
     description: str
+    id: str = ""  # Stable identity — survives reorder/insert/delete
     status: str = "pending"  # pending, active, done, skipped, failed, blocked
     annotations: list[str] = field(default_factory=list)  # user specs, hints, acceptance criteria
     files: list[str] = field(default_factory=list)  # files this step touches
     commit_hash: str | None = None  # git commit for this step
     daemon_id: int | None = None  # which daemon is running this
     error: str | None = None  # error message if failed
+
+    def __post_init__(self):
+        if not self.id:
+            self.id = _generate_step_id(self.description)
 
     @property
     def checkbox(self) -> str:
@@ -327,6 +341,20 @@ class Plan:
 
         return cls(intent=intent, steps=steps)
 
+    def step_by_id(self, step_id: str) -> Step | None:
+        """Find a step by its stable ID."""
+        for step in self.steps:
+            if step.id == step_id:
+                return step
+        return None
+
+    def step_index_by_id(self, step_id: str) -> int | None:
+        """Find a step's current index by its stable ID."""
+        for i, step in enumerate(self.steps):
+            if step.id == step_id:
+                return i
+        return None
+
     def to_yaml(self) -> str:
         """Serialize plan as YAML — the canonical disk format."""
         data = {
@@ -334,7 +362,7 @@ class Plan:
             "steps": [],
         }
         for step in self.steps:
-            s: dict = {"description": step.description, "status": step.status}
+            s: dict = {"id": step.id, "description": step.description, "status": step.status}
             if step.annotations:
                 s["annotations"] = step.annotations
             if step.files:
@@ -363,6 +391,7 @@ class Plan:
             elif isinstance(s, dict):
                 steps.append(Step(
                     description=s.get("description", ""),
+                    id=s.get("id", ""),  # Empty → __post_init__ generates one
                     status=s.get("status", "pending"),
                     annotations=s.get("annotations", []),
                     files=s.get("files", []),
@@ -420,3 +449,56 @@ class Plan:
         """Return (done_count, total_count)."""
         done = sum(1 for s in self.steps if s.status in ("done", "skipped"))
         return done, len(self.steps)
+
+
+@dataclass
+class StepStatusUpdate:
+    """A daemon's status update for a step, keyed by step ID."""
+    step_id: str
+    status: str
+    commit_hash: str | None = None
+    error: str | None = None
+    timestamp: float = field(default_factory=_time.time)
+
+    def apply(self, step: Step) -> None:
+        """Apply this update to a step's status fields."""
+        step.status = self.status
+        if self.commit_hash:
+            step.commit_hash = self.commit_hash
+        if self.error:
+            step.error = self.error
+
+
+class StatusOverlay:
+    """Buffers daemon status updates, decoupled from the TextArea.
+
+    Daemons post updates here. In NORMAL mode, updates apply to the Plan
+    and re-render immediately. In INSERT mode, updates apply to the Plan
+    (in-memory) but the TextArea is untouched — updates queue here and
+    merge when the user exits INSERT mode.
+    """
+
+    def __init__(self):
+        self._pending: dict[str, StepStatusUpdate] = {}
+
+    def post(self, update: StepStatusUpdate) -> None:
+        """Daemon posts a status update."""
+        self._pending[update.step_id] = update
+
+    def drain(self) -> list[StepStatusUpdate]:
+        """Consume all pending updates. Called on INSERT→NORMAL."""
+        updates = list(self._pending.values())
+        self._pending.clear()
+        return updates
+
+    def peek(self) -> dict[str, StepStatusUpdate]:
+        """Read pending updates without consuming."""
+        return dict(self._pending)
+
+    @property
+    def has_pending(self) -> bool:
+        return bool(self._pending)
+
+    @property
+    def pending_count(self) -> int:
+        return len(self._pending)

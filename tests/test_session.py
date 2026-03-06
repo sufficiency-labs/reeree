@@ -59,7 +59,7 @@ class TestSessionSerialization:
         registry = DaemonRegistry()
         d1 = registry.spawn(DaemonKind.EXECUTOR, "main executor")
         d2 = registry.spawn(DaemonKind.STEP, "step 1", parent_id=d1.id,
-                           step_index=0, model="qwen3")
+                           step_id="step-0", model="qwen3")
         d2.status = DaemonStatus.DONE
         d2.log = "Executed step 1\nDone\n"
 
@@ -75,7 +75,7 @@ class TestSessionSerialization:
         assert d1r.description == "main executor"
         assert d2r.kind == DaemonKind.STEP
         assert d2r.parent_id == d1r.id
-        assert d2r.step_index == 0
+        assert d2r.step_id == "step-0"
         assert d2r.model == "qwen3"
         assert d2r.status == DaemonStatus.DONE
         assert "Executed step 1" in d2r.log

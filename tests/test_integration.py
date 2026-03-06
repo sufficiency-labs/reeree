@@ -81,15 +81,18 @@ class TestFullWorkflow:
             status = app.query_one("#status-bar", StatusBar)
             editor = app.query_one("#plan-editor", PlanEditor)
 
-            # 1. starts NORMAL
-            assert status.mode == "NORMAL"
+            # 1. starts VIEW
+            assert status.mode == "VIEW"
             assert "Add visited URL tracking" in editor.text
 
-            # 2. INSERT → type → NORMAL
+            # 2. VIEW → NORMAL → INSERT → NORMAL → VIEW
+            editor.enter_edit_mode()
+            await pilot.pause()
             await pilot.press("i")
             assert status.mode == "INSERT"
-            await pilot.press("escape")
-            assert status.mode == "NORMAL"
+            await pilot.press("escape")  # INSERT → NORMAL
+            await pilot.press("escape")  # NORMAL → VIEW
+            assert status.mode == "VIEW"
 
             # 3. add a step via command
             await _cmd(app, pilot, 'add "Deploy to prod"')
@@ -115,41 +118,53 @@ class TestVimModes:
 
     @pytest.mark.asyncio
     async def test_full_modal_cycle(self, tmp_path):
-        """NORMAL → INSERT(i) → NORMAL → INSERT(a) → NORMAL → INSERT(o) → NORMAL → COMMAND → NORMAL"""
+        """VIEW → NORMAL(:edit) → INSERT(i) → NORMAL → INSERT(a) → NORMAL → INSERT(o) → NORMAL → VIEW → COMMAND → VIEW"""
         app = _app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
             status = app.query_one("#status-bar", StatusBar)
             editor = app.query_one("#plan-editor", PlanEditor)
 
-            assert status.mode == "NORMAL"
+            assert status.mode == "VIEW"
             assert editor.read_only
+
+            # Enter NORMAL (YAML) mode via :edit
+            editor.enter_edit_mode()
+            await pilot.pause()
 
             for key in ("i", "a", "o"):
                 await pilot.press(key)
                 assert status.mode == "INSERT"
                 assert not editor.read_only
-                await pilot.press("escape")
-                assert status.mode == "NORMAL"
+                await pilot.press("escape")  # INSERT → NORMAL
+                assert status.mode == "EDIT"
                 assert editor.read_only
 
-            # COMMAND mode
+            # Escape from NORMAL → VIEW
+            await pilot.press("escape")
+            assert status.mode == "VIEW"
+
+            # COMMAND mode from VIEW
             await pilot.press("colon")
             await pilot.pause()
             assert isinstance(app.screen, CommandScreen)
             await pilot.press("escape")
             await pilot.pause()
-            assert status.mode == "NORMAL"
+            assert status.mode == "VIEW"
 
     @pytest.mark.asyncio
     async def test_rapid_mode_switching(self, tmp_path):
         """Rapidly toggling modes doesn't corrupt state."""
         app = _app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
+            editor = app.query_one("#plan-editor", PlanEditor)
+            # Enter NORMAL first, then rapid INSERT/NORMAL toggles
+            editor.enter_edit_mode()
+            await pilot.pause()
             for _ in range(20):
                 await pilot.press("i")
                 await pilot.press("escape")
             status = app.query_one("#status-bar", StatusBar)
-            assert status.mode == "NORMAL"
+            assert status.mode == "EDIT"  # NORMAL mode shows as EDIT in status bar
             assert app.query_one("#plan-editor", PlanEditor).read_only
 
 

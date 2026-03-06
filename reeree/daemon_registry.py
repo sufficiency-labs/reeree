@@ -34,7 +34,7 @@ class Daemon:
     description: str
     status: DaemonStatus = DaemonStatus.ACTIVE
     parent_id: int | None = None
-    step_index: int = -1
+    step_id: str = ""
     scope: str = ""
     model: str = ""
     start_time: float = field(default_factory=time.monotonic)
@@ -73,7 +73,7 @@ class DaemonRegistry:
         kind: DaemonKind,
         description: str,
         parent_id: int | None = None,
-        step_index: int = -1,
+        step_id: str = "",
         scope: str = "",
         model: str = "",
     ) -> Daemon:
@@ -83,7 +83,7 @@ class DaemonRegistry:
             kind=kind,
             description=description,
             parent_id=parent_id,
-            step_index=step_index,
+            step_id=step_id,
             scope=scope,
             model=model,
         )

@@ -9,7 +9,7 @@ class TestDaemonDataclass:
         d = Daemon(id=1, kind=DaemonKind.STEP, description="test step")
         assert d.status == DaemonStatus.ACTIVE
         assert d.parent_id is None
-        assert d.step_index == -1
+        assert d.step_id == ""
         assert d.log == ""
         assert d.is_active
 
@@ -196,11 +196,11 @@ class TestDaemonTree:
             kind=DaemonKind.STEP,
             description="do thing",
             parent_id=parent.id,
-            step_index=3,
+            step_id="step-3",
             scope="myproject",
             model="qwen3-coder",
         )
         assert d.parent_id == parent.id
-        assert d.step_index == 3
+        assert d.step_id == "step-3"
         assert d.scope == "myproject"
         assert d.model == "qwen3-coder"
