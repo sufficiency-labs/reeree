@@ -1,4 +1,4 @@
-"""reeree CLI — entry point for the living document interface."""
+"""reeree CLI — open a document. machines work inside it."""
 
 import click
 import sys
@@ -10,7 +10,7 @@ from .planner import create_plan
 
 
 @click.group(invoke_without_command=True)
-@click.argument("intent", nargs=-1, required=False)
+@click.argument("target", nargs=-1, required=False)
 @click.option("--model", help="Model to use (e.g. deepseek-coder-v2:latest)")
 @click.option("--api-base", help="API base URL")
 @click.option("--api-key", help="API key")
@@ -18,14 +18,19 @@ from .planner import create_plan
 @click.option("--project", type=click.Path(exists=True), default=".", help="Project directory")
 @click.option("--setup", is_flag=True, help="Launch setup wizard")
 @click.pass_context
-def main(ctx, intent, model, api_base, api_key, autonomy, project, setup):
-    """reeree — edit a markdown document. daemons respond to what you write.
+def main(ctx, target, model, api_base, api_key, autonomy, project, setup):
+    """reeree — a text editor where machines work inside your document.
+
+    Open a document. Edit it. Drop in [machine: ...] annotations. Save.
+    Daemons execute. Results appear. The document evolves.
 
     Examples:
-        reeree                                  # open TUI (resume plan or blank)
-        reeree "add error handling to scraper"  # open TUI with generated plan
-        reeree ls                               # list sessions
-        reeree kill                             # kill daemon
+        reeree                          # open default plan (or create)
+        reeree essay.md                 # open any markdown file
+        reeree plan.yaml                # open a plan file
+        reeree IMPLEMENTATION_PLAN.md   # open a project doc
+        reeree "fix the auth bug"       # create a plan from intent
+        reeree ls                       # list sessions
     """
     if ctx.invoked_subcommand is not None:
         return
@@ -42,26 +47,58 @@ def main(ctx, intent, model, api_base, api_key, autonomy, project, setup):
         config.api_key = api_key
     config.autonomy = autonomy
 
-    # Load or create plan
-    plan_path = project_dir / ".reeree" / "plan.yaml"
+    # Determine what to open
+    target_str = " ".join(target) if target else ""
     plan = None
+    open_file = None  # file to open in viewer on launch
 
-    if intent:
-        intent_str = " ".join(intent)
-        click.echo(f"Planning: {intent_str}")
-        try:
-            plan = create_plan(intent_str, project_dir, config)
-            plan.save(plan_path)
-            click.echo(f"Plan: {plan_path} ({len(plan.steps)} steps)")
-        except Exception as e:
-            click.echo(f"Failed to create plan: {e}", err=True)
-            sys.exit(1)
-    elif plan_path.exists():
-        plan = Plan.load(plan_path)
-        done, total = plan.progress
-        click.echo(f"Resuming: {plan_path} ({done}/{total} done)")
+    if target_str:
+        # Is it a file path?
+        target_path = Path(target_str)
+        # Check relative to cwd first, then project dir
+        if target_path.exists():
+            resolved = target_path.resolve()
+        elif (project_dir / target_path).exists():
+            resolved = (project_dir / target_path).resolve()
+        else:
+            resolved = None
+
+        if resolved and resolved.is_file():
+            # Opening a specific document
+            if resolved.suffix in (".yaml", ".yml"):
+                # YAML file — try to load as plan
+                try:
+                    plan = Plan.load(resolved)
+                    done, total = plan.progress
+                    click.echo(f"Opening plan: {resolved.name} ({done}/{total} done)")
+                except Exception:
+                    # Not a plan YAML — open as file
+                    open_file = resolved
+                    click.echo(f"Opening: {resolved.name}")
+            else:
+                # Markdown or other file — open in file viewer
+                open_file = resolved
+                click.echo(f"Opening: {resolved.name}")
+        else:
+            # Not a file — treat as intent string for plan generation
+            click.echo(f"Planning: {target_str}")
+            try:
+                plan = create_plan(target_str, project_dir, config)
+                plan_path = project_dir / ".reeree" / "plan.yaml"
+                plan.save(plan_path)
+                click.echo(f"Plan: {plan_path} ({len(plan.steps)} steps)")
+            except Exception as e:
+                click.echo(f"Failed to create plan: {e}", err=True)
+                sys.exit(1)
     else:
-        click.echo(f"No plan. Edit {plan_path} or pass an intent.")
+        # No target — open default plan
+        plan_path = project_dir / ".reeree" / "plan.yaml"
+        if plan_path.exists():
+            plan = Plan.load(plan_path)
+            done, total = plan.progress
+            click.echo(f"Resuming: {plan_path.name} ({done}/{total} done)")
+        else:
+            click.echo("No plan. :edit to start writing, :chat to talk to executor.")
 
     if plan is None:
         plan = Plan(intent="", steps=[])
@@ -74,6 +111,11 @@ def main(ctx, intent, model, api_base, api_key, autonomy, project, setup):
     # Launch TUI
     from .tui.app import ReereeApp
     app = ReereeApp(project_dir=project_dir, config=config, plan=plan)
+
+    # If opening a specific file, open it in the file viewer on mount
+    if open_file:
+        app._launch_file = open_file
+
     app.run()
 
 

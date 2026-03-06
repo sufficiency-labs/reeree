@@ -515,6 +515,7 @@ class ReereeApp(App):
         self._scope_stack: list[tuple] = []
         self._file_viewer_path: Path | None = None  # Track open file
         self._status_overlay = StatusOverlay()  # Daemon status updates buffer
+        self._launch_file: Path | None = None  # File to open on mount (from CLI)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -583,6 +584,12 @@ class ReereeApp(App):
 
         # Start heartbeat timer for always-on daemons
         self._heartbeat_timer = self.set_interval(120, self._daemon_heartbeat)
+
+        # Open file from CLI if specified (reeree essay.md)
+        if self._launch_file and self._launch_file.exists():
+            self._show_file(str(self._launch_file.relative_to(self.project_dir))
+                           if self._launch_file.is_relative_to(self.project_dir)
+                           else str(self._launch_file))
 
         # First-run setup wizard
         if self.config.is_first_run():
