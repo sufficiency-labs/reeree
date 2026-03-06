@@ -133,6 +133,10 @@ Opens in NORMAL mode. `i` enters INSERT immediately — no `:edit` gate. `:w` sa
 :cohere [path|glob]         run coherence check
 :propagate                  crawl cross-references
 
+# Queued tasks
+:tasks                      list discovered queued tasks
+:load-task N                load queued task N as plan
+
 # Session
 :undo                       git revert last step
 :q / :q! / :wq              quit / force quit / save+quit
@@ -159,7 +163,7 @@ This works in any markdown file opened with `:file`. The plan is one kind of mac
 
 **Chat when you need it.** `:chat` opens a conversation with the executor daemon. It's there for when you need to talk through something. But dispatch is the primary interface — you write, the tool executes.
 
-**Cross-references are context.** Link to another markdown doc and the daemon reads it. Your existing docs, specs, READMEs — they're all feedable context.
+**Cross-references are context.** Context assembly follows markdown links one level deep — `[text](path)` in your CLAUDE.md, README, or step files gets resolved and loaded. Directory links resolve to README.md inside. Budget-controlled (25% of remaining context, 5K cap per file).
 
 **Sessions persist.** tmux-style daemon. Kill your terminal, reconnect later, document and daemons are right where you left them.
 
@@ -187,7 +191,7 @@ See [VALUES.md](VALUES.md) for the full values statement and [IMPLEMENTATION.md]
 reeree/
 ├── cli.py              # Entry point
 ├── config.py           # Configuration
-├── context.py          # Focused context per step
+├── context.py          # Focused context per step + cross-reference following
 ├── claude_backend.py   # Claude Code subprocess backend (--resume persistence)
 ├── daemon_executor.py  # Together.ai/OpenAI multi-turn step execution
 ├── daemon_registry.py  # Daemon lifecycle (hierarchy, pause/kill)
@@ -201,6 +205,7 @@ reeree/
 ├── plugin.py           # Plugin base class
 ├── router.py           # Model routing (reasoning/coding/fast)
 ├── session.py          # Session state serialization
+├── task_discovery.py   # Queued task file parser + discovery
 └── tui/
     ├── app.py          # Main application (vim modal, commands)
     ├── daemon_tree.py  # Daemon display widget
@@ -231,7 +236,7 @@ source /mnt/vorkosigan_data_v2/vorkosigan/.venv/bin/activate
 cd /mnt/vorkosigan_data_v2/vorkosigan/private/reeree
 pip install -e .
 
-# Run tests (423 passing, 19 xfailed)
+# Run tests (447 passing, 19 xfailed)
 python -m pytest tests/ -v
 
 # Launch TUI
@@ -246,7 +251,7 @@ reeree --project sandbox "add error handling to the scraper"
 
 ## Status
 
-Active development. 408 tests passing. Core dispatch loop, multi-turn daemons, daemon hierarchy, model routing, inline machine tasks, Claude Code subprocess backend, setup wizard, and TUI all working. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
+Active development. 447 tests passing. Core dispatch loop, multi-turn daemons, daemon hierarchy, model routing, inline machine tasks, Claude Code subprocess backend, setup wizard, and TUI all working. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
 
 ---
 
