@@ -920,6 +920,13 @@ class ReereeApp(App):
         Chat is the right interface for expressing nuanced constraints like
         "use ollama but fall back to together.ai for hard steps."
         """
+        # If claude-code backend is active, no setup needed
+        if self.config.backend == "claude-code":
+            import shutil
+            if shutil.which("claude"):
+                self._exec_write("[dim]claude-code backend active — no setup needed[/dim]")
+                return
+
         self._chat_target = "setup"
         self._chat_messages = []
 

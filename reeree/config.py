@@ -67,10 +67,16 @@ class Config:
 
     def is_first_run(self) -> bool:
         """True if no usable backend configured."""
+        import shutil
         if self.backend == "claude-code":
-            import shutil
             return not shutil.which("claude")
-        return not self.api_key and not self.models
+        # together backend with no key — but if claude is available, auto-upgrade
+        if not self.api_key and not self.models:
+            if shutil.which("claude"):
+                self.backend = "claude-code"
+                return False
+            return True
+        return False
 
     def __post_init__(self):
         if not self.api_key:
