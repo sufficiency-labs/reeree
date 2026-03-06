@@ -124,7 +124,9 @@ Three modes in the document, like vim:
 :kill N                     kill daemon and children
 
 # Configuration
-:set model <name>           change LLM model
+:set model <name>           change LLM model (together backend)
+:set backend <name>         together|claude-code
+:set claude-model <name>    sonnet|opus|haiku (claude-code backend)
 :set autonomy <level>       low|medium|high|full
 :setup                      re-run setup wizard
 
@@ -230,7 +232,7 @@ source /mnt/vorkosigan_data_v2/vorkosigan/.venv/bin/activate
 cd /mnt/vorkosigan_data_v2/vorkosigan/private/reeree
 pip install -e .
 
-# Run tests (396 passing, 19 xfailed)
+# Run tests (423 passing, 19 xfailed)
 python -m pytest tests/ -v
 
 # Launch TUI
@@ -245,7 +247,7 @@ reeree --project sandbox "add error handling to the scraper"
 
 ## Status
 
-Active development. 396 tests passing. Core dispatch loop, multi-turn daemons, daemon hierarchy, model routing, inline machine tasks, setup wizard, and TUI all working. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
+Active development. 423 tests passing. Core dispatch loop, multi-turn daemons, daemon hierarchy, model routing, inline machine tasks, Claude Code subprocess backend, setup wizard, and TUI all working. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
 
 ---
 

@@ -1263,7 +1263,7 @@ class ReereeApp(App):
             "  :log [N]         Show daemon N log\n"
             "  :file path       View/edit a project file\n"
             "  :undo            Revert last step\n"
-            "  :set key value   Set config (model, autonomy)\n"
+            "  :set key value   Set config (model, backend, claude-model, autonomy)\n"
             "  :chat            Chat with executor daemon\n"
             "  :chat coherence  Chat with coherence daemon\n"
             "  :cohere path     Run coherence check\n"

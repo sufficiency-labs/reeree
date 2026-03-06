@@ -132,7 +132,7 @@ reeree --project sandbox "add error handling to the scraper"
 - **~3-5K lines total.** Not a framework. If it's getting bigger, something is wrong.
 - **YAML is the canonical plan format.** Plan files save as YAML on disk. Daemon communication uses YAML. Display is markdown-like but storage is YAML. No JSON schemas, no custom DSLs.
 - **Commit early, commit often.** One logical change per commit.
-- **Tests document behavior.** 396 passing, 19 xfailed (planned features).
+- **Tests document behavior.** 423 passing, 19 xfailed (planned features).
 - **Values trace to code.** Every ADR has a "Values served" field. See [docs/strategic/decisions/](docs/strategic/decisions/).
 - **Voice spec in voice.py.** All daemon system prompts import `VOICE` from `voice.py` (STE-derived clear prose rules). See [ADR-014](docs/strategic/decisions/ADR-014-simplified-technical-english.md).
 
