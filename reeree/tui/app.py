@@ -16,6 +16,7 @@ from ..config import Config
 from ..daemon_registry import DaemonRegistry, DaemonKind, DaemonStatus
 from ..machine_tasks import find_tasks, mark_in_progress, splice_result, MachineTask
 from ..plan import Plan, StatusOverlay, StepStatusUpdate
+from ..task_discovery import discover_tasks, task_to_plan, format_task_list
 from ..voice import VOICE
 from .daemon_tree import DaemonTreeView
 
@@ -1169,6 +1170,10 @@ class ReereeApp(App):
                     self._exec_write(f"d{did} not found")
             except ValueError:
                 self.notify("Usage: :kill N", severity="warning")
+        elif command == "tasks":
+            self._list_tasks()
+        elif command in ("load-task", "loadtask"):
+            self._load_task(args)
         elif command == "setup":
             self._launch_setup()
         elif command == "help":
@@ -1211,10 +1216,62 @@ class ReereeApp(App):
             "  :pause N         Pause daemon N\n"
             "  :resume N        Resume paused daemon N\n"
             "  :kill N          Kill daemon N (and children)\n"
+            "  :tasks           List queued tasks\n"
+            "  :load-task N     Load queued task N as plan\n"
             "  :setup           Re-run setup wizard\n"
             "  :q / :q! / :wq   Quit / force quit / save+quit\n"
             "  :help            This help\n"
         )
+
+    def _list_tasks(self) -> None:
+        """List discovered queued tasks."""
+        tasks = discover_tasks(self._project_dir)
+        self._discovered_tasks = tasks
+        self._exec_write(format_task_list(tasks))
+
+    def _load_task(self, args: str) -> None:
+        """Load a queued task as the current plan."""
+        if not args.strip():
+            self.notify("Usage: :load-task N  (run :tasks first)", severity="warning")
+            return
+
+        # Allow path or index
+        arg = args.strip()
+
+        if arg.isdigit():
+            idx = int(arg) - 1  # 1-based to 0-based
+            tasks = getattr(self, "_discovered_tasks", None)
+            if not tasks:
+                tasks = discover_tasks(self._project_dir)
+                self._discovered_tasks = tasks
+            if idx < 0 or idx >= len(tasks):
+                self.notify(f"Task {arg} out of range (1-{len(tasks)})", severity="error")
+                return
+            task_file = tasks[idx]
+        else:
+            # Treat as path
+            p = Path(arg)
+            if not p.is_absolute():
+                p = self._project_dir / p
+            if not p.exists():
+                self.notify(f"Not found: {arg}", severity="error")
+                return
+            from ..task_discovery import parse_task_file
+            task_file = parse_task_file(p)
+
+        # Convert to plan and load
+        new_plan = task_to_plan(task_file)
+        self.plan = new_plan
+        editor = self.query_one("#plan-editor", PlanEditor)
+        editor.load_plan(self.plan)
+        self._save_plan()
+        self._update_status()
+        self._exec_write(
+            f"Loaded: {task_file.title}\n"
+            f"  {len(new_plan.steps)} steps from {task_file.filename}\n"
+            f"  :go to dispatch"
+        )
+        self._flog.info(f"Loaded task: {task_file.filename} ({len(new_plan.steps)} steps)")
 
     def _toggle_chat(self, target: str = "") -> None:
         panel = self.query_one("#chat-panel")

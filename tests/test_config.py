@@ -43,12 +43,12 @@ class TestLoadApiKey:
 
 class TestConfig:
     def test_defaults(self):
-        """Default config points to together.ai."""
+        """Default config points to together.ai with best available model."""
         c = Config.__new__(Config)
         c.api_base = "https://api.together.xyz/v1"
-        c.model = "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
+        c.model = "deepseek-ai/DeepSeek-V3.1"
         assert "together" in c.api_base
-        assert "Qwen" in c.model
+        assert "DeepSeek" in c.model
 
     def test_load_from_file(self, tmp_path):
         """Config loads from .reeree/config.json."""
