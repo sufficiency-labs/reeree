@@ -138,8 +138,10 @@ reeree --project sandbox "add error handling to the scraper"
 ## Test Droplet
 
 ```bash
-ssh rob@138.197.23.221
-# Ubuntu 24.04, 2vCPU/2GB, NYC3
+ssh rob@138.197.125.145
+# Ubuntu 24.04, 4vCPU/8GB, NYC3
+# Repos: ~/repos/reeree, ~/repos/sufficiency-platform, ~/repos/values-driven-systems-engineering
+# Claude Code installed globally, ANTHROPIC_API_KEY in .bashrc
 ```
 
 ## VDSE Docs
