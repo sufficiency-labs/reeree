@@ -79,7 +79,8 @@ class MessageBus:
         Returns the messages and removes them from the mailbox.
         Called by daemon executor between LLM turns.
         """
-        messages = self._mailboxes.pop(daemon_id, [])
+        messages = self._mailboxes.get(daemon_id, [])
+        self._mailboxes[daemon_id] = []
         return messages
 
     def peek(self, daemon_id: int) -> list[DaemonMessage]:

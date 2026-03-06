@@ -313,8 +313,12 @@ async def dispatch_step(
 
     # Final assessment
     if not has_mutations:
-        log("WARNING: daemon made no changes across all turns")
-        return {"status": "failed", "error": "Daemon made no changes (read-only)",
+        # Read-only steps are valid work (e.g., "understand the codebase").
+        # No commit needed — nothing changed on disk.
+        log(f"Done (read-only): {last_summary}")
+        if next_step_notes:
+            log(f"Notes for next step: {next_step_notes}")
+        return {"status": "done", "summary": last_summary,
                 "next_step_notes": next_step_notes}
 
     all_ok = all(r.success for r in all_results) if all_results else True

@@ -242,8 +242,8 @@ class TestMultiTurnDispatch:
         assert result["status"] == "done"
 
     @pytest.mark.asyncio
-    async def test_read_only_fails(self, sandbox):
-        """If daemon only reads across all turns, it fails."""
+    async def test_read_only_succeeds(self, sandbox):
+        """Read-only steps are valid work (understanding codebase, etc.)."""
         response = (
             'actions:\n'
             '  - type: read\n'
@@ -264,8 +264,8 @@ class TestMultiTurnDispatch:
                 config=config, on_log=lambda m: None,
             )
 
-        assert result["status"] == "failed"
-        assert "no changes" in result["error"].lower()
+        assert result["status"] == "done"
+        assert result["summary"] == "just read it"
 
     @pytest.mark.asyncio
     async def test_turn_limit(self, sandbox):
@@ -291,7 +291,8 @@ class TestMultiTurnDispatch:
                 config=config, on_log=logs.append,
             )
 
-        assert result["status"] == "failed"
+        # Hits turn limit, but only did reads — still counts as done (read-only)
+        assert result["status"] == "done"
         assert any(f"{MAX_TURNS}-turn limit" in log for log in logs)
 
     @pytest.mark.asyncio

@@ -96,16 +96,16 @@ class DaemonRegistry:
         return self._daemons.get(daemon_id)
 
     def kill(self, daemon_id: int) -> bool:
-        """Mark a daemon (and its children) as failed."""
+        """Mark a daemon (and all descendants) as failed."""
         daemon = self._daemons.get(daemon_id)
         if daemon is None:
             return False
         daemon.status = DaemonStatus.FAILED
         daemon.error = "killed"
-        # Kill children too
+        # Recursively kill all descendants
         for child in self.children(daemon_id):
-            if child.is_active:
-                child.status = DaemonStatus.FAILED
+            if child.status in (DaemonStatus.ACTIVE, DaemonStatus.PAUSED):
+                self.kill(child.id)
                 child.error = "parent killed"
         return True
 

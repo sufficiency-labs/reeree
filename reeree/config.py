@@ -60,8 +60,11 @@ class Config:
         if path is None:
             path = Path(".reeree/config.json")
         if path.exists():
-            data = json.loads(path.read_text())
-            return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+            try:
+                data = json.loads(path.read_text())
+                return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+            except (json.JSONDecodeError, ValueError):
+                return cls()  # Corrupt config → fall back to defaults
         return cls()
 
     def save(self, path: Path | None = None) -> None:
