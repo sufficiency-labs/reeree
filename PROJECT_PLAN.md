@@ -1,7 +1,7 @@
 # Project Plan
 
 ## Current State
-Phase 1 complete. Phase 3 complete. Phase 8 infrastructure complete. Session serialization (Phase 2) done. Socket daemon (Phase 2) not started. File viewer, chat-based setup, log tightening, voice spec, YAML plan format all working. 377 tests passing.
+Phase 1 complete. Phase 3 complete. Phase 8 infrastructure complete. Session serialization (Phase 2) done. Socket daemon (Phase 2) not started. File viewer, chat-based setup, log tightening, voice spec, YAML plan format all working. Inline machine tasks working — any document is machine-addressable. Three-mode model (VIEW/NORMAL/INSERT) with step IDs for parallel dispatch infrastructure. 396 tests passing.
 
 ---
 
@@ -66,11 +66,11 @@ Phase 1 complete. Phase 3 complete. Phase 8 infrastructure complete. Session ser
 8. Tab cycling between panes — **DONE**
 
 ### Remaining
-- Step reordering while daemons execute (`:move` exists but needs hardening)
+- (Step IDs now provide stable references for reordering during execution)
 
 ---
 
-## Phase 4: Vim Keybindings — 70% Complete
+## Phase 4: Vim Keybindings — 85% Complete
 **Goal:** Full modal interface — normal, insert, command modes.
 **Values tested:** [Vim Is the Lingua Franca](VALUES.md#5-vim-is-the-lingua-franca)
 
@@ -84,6 +84,9 @@ Phase 1 complete. Phase 3 complete. Phase 8 infrastructure complete. Session ser
 - [x] Command history (up to 100 entries)
 - [x] All keyboard shortcuts documented ([docs/keyboard-shortcuts.md](docs/keyboard-shortcuts.md))
 - [x] 74 dedicated workflow + keyboard tests
+- [x] Three-mode model (VIEW/NORMAL/INSERT)
+- [x] `:edit` command for entering edit mode
+- [x] 396 tests passing
 
 ### What doesn't
 - [ ] Vim motions: d, y, p, visual mode
@@ -92,16 +95,18 @@ Phase 1 complete. Phase 3 complete. Phase 8 infrastructure complete. Session ser
 
 ---
 
-## Phase 5: Parallel Daemons — 0%
+## Phase 5: Parallel Daemons — 25%
 **Goal:** Multiple daemons running simultaneously on independent steps.
 **Values tested:** [Overlap Not Turn-Taking](VALUES.md#3-overlap-not-turn-taking)
 
 ### Deliverables
-1. Daemon pool — configurable concurrent limit (default: 2)
-2. Dependency detection — same-file steps run sequentially
-3. File conflict detection
-4. Per-daemon controls (`:pause 2`, `:kill 1`, `:log 3`) — **DONE** (registry supports it)
-5. Progress summary
+1. Step IDs — stable identifiers for parallel-safe step references — **DONE**
+2. StatusOverlay — overlay widget for daemon/step status display — **DONE**
+3. Daemon pool — configurable concurrent limit (default: 2)
+4. Dependency detection — same-file steps run sequentially
+5. File conflict detection
+6. Per-daemon controls (`:pause 2`, `:kill 1`, `:log 3`) — **DONE** (registry supports it)
+7. Progress summary
 
 ---
 
@@ -140,10 +145,10 @@ Phase 1 complete. Phase 3 complete. Phase 8 infrastructure complete. Session ser
 
 | Command | Status | Description |
 |---------|--------|-------------|
-| `:w` | DONE | Execute plan up to cursor |
-| `:w N` | DONE | Execute specific step(s) |
-| `:W` | DONE | Execute ALL pending steps |
-| `:go` | DONE | Dispatch next 2 pending |
+| `:w` | DONE | Save plan (exit edit mode if editing) |
+| `:go N` | DONE | Dispatch step N |
+| `:W` | DONE | Dispatch ALL pending steps |
+| `:edit` | DONE | Enter edit mode |
 | `:add "desc"` | DONE | Add step |
 | `:del N` | DONE | Delete step |
 | `:move N M` | DONE | Reorder step |

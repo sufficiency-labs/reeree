@@ -2,9 +2,9 @@
 
 ## What is reeree?
 
-An LLM-assisted systems engineering tool. You edit a markdown document. Daemons respond to what you write. Terminal-native, vim keybindings, plan-as-file steering, parallel daemons, model-agnostic.
+A text editor where machines work inside your document. Any document — markdown, YAML, a plan, a checklist, a spec, a research brief — can be machine-addressable. You write `[machine: ...]` annotations inline, save, and daemons do the work, splicing results back into the document. The plan/checklist is the prominent example, but the architecture is document-general. Terminal-native, vim keybindings, parallel daemons, model-agnostic.
 
-Not a chatbot. Not an IDE. A dispatch console.
+Not a chatbot. Not an IDE. Not just a dispatch console.
 
 ## Default Voice: Ship's Computer
 
@@ -27,6 +27,7 @@ reeree/
 ├── daemon_registry.py # Daemon lifecycle — DaemonRegistry, DaemonKind, DaemonStatus
 ├── executor.py        # File edits, shell commands, git ops, safety classification
 ├── llm.py             # LLM API — OpenAI-compatible httpx calls
+├── machine_tasks.py   # [machine: ...] annotation parser + dispatcher
 ├── plan.py            # Plan/Step data model + YAML serialization
 ├── planner.py         # Intent → step list decomposition
 ├── voice.py           # Voice specification (STE-derived clear prose rules)
@@ -41,6 +42,20 @@ reeree/
 ```
 
 ## Key Patterns
+
+### Machine Tasks
+`[machine: ...]` annotations in any document. On `:w`, `machine_tasks.py` finds them, dispatches daemons, and splices results back into the document. The annotation disappears, replaced by the daemon's output. Works in any markdown or YAML file — plans, specs, essays, research briefs.
+
+### StatusOverlay
+The daemon updates the buffer with status while work is in progress. Changes merge cleanly on edit mode exit so the user never loses keystrokes.
+
+### Step IDs
+Stable identifiers (e.g. `add-a1b2`) that survive reordering. Steps can be moved, inserted, or deleted without breaking references.
+
+### Three Modes
+- **VIEW** (default): rich display, read-only, status overlays visible
+- **EDIT**: YAML source, full vim keybindings, `:edit` to enter
+- **INSERT**: typing within edit mode, `i`/`a`/`o` to enter from EDIT
 
 ### DaemonRegistry (not _daemons dict)
 `app.py` uses `self._daemon_registry` (a `DaemonRegistry` instance). The old `self._daemons` dict pattern is gone. All daemon lifecycle goes through the registry.
@@ -72,6 +87,7 @@ python -m pytest tests/ -v -k "not (test_basic_response or test_json_response or
 
 # Launch TUI
 reeree --project sandbox "add error handling to the scraper"
+# Inside the TUI: :edit to edit the plan, :go to dispatch, :w to save + run machine tasks
 ```
 
 ## Conventions
@@ -79,7 +95,7 @@ reeree --project sandbox "add error handling to the scraper"
 - **~3-5K lines total.** Not a framework. If it's getting bigger, something is wrong.
 - **YAML is the canonical plan format.** Plan files save as YAML on disk. Daemon communication uses YAML. Display is markdown-like but storage is YAML. No JSON schemas, no custom DSLs.
 - **Commit early, commit often.** One logical change per commit.
-- **Tests document behavior.** 377 passing, 19 xfailed (planned features).
+- **Tests document behavior.** 396 passing, 19 xfailed (planned features).
 - **Values trace to code.** Every ADR has a "Values served" field. See [docs/strategic/decisions/](docs/strategic/decisions/).
 - **Voice spec in voice.py.** All daemon system prompts import `VOICE` from `voice.py` (STE-derived clear prose rules). See [ADR-014](docs/strategic/decisions/ADR-014-simplified-technical-english.md).
 

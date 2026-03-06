@@ -4,11 +4,11 @@
 
 LLM coding tools are chatbots with shell access. They assume the AI is a conversational partner — an intern you talk to. That's wrong. The AI is a tool. It should amplify human agency, not simulate its own.
 
-Power users already have the right workflow: tmux for persistence, vim for editing, bash for execution, git for undo. But they're the glue connecting these tools to LLM calls. reeree extracts that workflow into a single tool where the human directs and the machines execute.
+Power users already have the right workflow: tmux for persistence, vim for editing, bash for execution, git for undo. But they're the glue connecting these tools to LLM calls. reeree extracts that workflow into a single tool where the human directs and the machines execute. Dispatch-first, but chat is there when you need it — freeform conversation is a valid mode, not a forbidden one.
 
 **Audience:** Developers who already live in the terminal and want LLM capabilities without surrendering control to a chatbot.
 
-**Stakes:** If we get this right, it's the first LLM coding tool designed around human agency instead of AI autonomy. If we get it wrong, it's another chatbot with a fancy TUI.
+**Stakes:** If we get this right, it's a text editor where machines work inside your document — plans are the prominent example, but any document works. If we get it wrong, it's another chatbot with a fancy TUI.
 
 ## Core Principles
 
@@ -20,11 +20,11 @@ Power users already have the right workflow: tmux for persistence, vim for editi
 **Implementation:** [ADR-001](docs/strategic/decisions/ADR-001-unix-domain-socket.md) (daemon architecture), [ADR-007](docs/strategic/decisions/ADR-007-orchestrator-llm.md) (orchestrator routing within delegated scope), [ADR-009](docs/strategic/decisions/ADR-009-plugin-architecture.md) (plugins extend delegation scope, not override it).
 
 ### 2. Plan Is the Interface
-**Principle:** Steering happens through a visible, editable work queue — not through conversation.
+**Principle:** Steering happens through visible, editable documents on disk — not through conversation. The plan is the prominent example, but any document is machine-addressable. Write `[machine: ...]` in an essay, a spec, a research brief, and daemons respond the same way they respond to plan steps.
 **Test question:** Is all state visible to the user as editable text on disk?
-**In practice:** The plan is a markdown file on disk. The user edits it directly. Daemons read it. All state is visible. Nothing is hidden in a context window.
+**In practice:** The plan is a markdown file on disk. So is any other document you're working on. The user edits directly; daemons read the file, execute inline `[machine: ...]` annotations, and splice results back in. The document evolves. All state is visible. Nothing is hidden in a context window.
 **Rules out:** Chat-first interfaces, hidden state, invisible "reasoning," context windows as the primary state store.
-**Implementation:** [ADR-003](docs/strategic/decisions/ADR-003-plan-as-markdown.md) (markdown work queue), [ADR-008](docs/strategic/decisions/ADR-008-propagate-cohere.md) (coherence across the doc tree), [plan.py](reeree/plan.py) (parser).
+**Implementation:** [ADR-003](docs/strategic/decisions/ADR-003-plan-as-markdown.md) (markdown work queue), [ADR-008](docs/strategic/decisions/ADR-008-propagate-cohere.md) (coherence across the doc tree), [plan.py](reeree/plan.py) (plan parser), [machine_tasks.py](reeree/machine_tasks.py) (inline `[machine: ...]` annotation dispatch).
 
 ### 3. Overlap, Not Turn-Taking
 **Principle:** User planning time and daemon execution time happen simultaneously.

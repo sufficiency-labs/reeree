@@ -1,338 +1,237 @@
 # reeree
 
-An LLM-assisted systems engineering tool. You edit a markdown document. Daemons respond to what you write.
+A text editor where machines work inside your document.
 
-Terminal-native, tmux-style persistent sessions, vim keybindings, plan-as-file steering, parallel daemons, model-agnostic. Extracts the workflow power users already do by hand (tmux + vim + bash + LLM + git) into a single tool.
+You write markdown. You drop in machine task annotations. You save. Daemons execute the tasks. Results appear in your document. The log shows what's happening. You can chat with a daemon if you need to.
+
+Terminal-native. Vim keybindings. Persistent sessions. Model-agnostic.
 
 ## What is this?
 
-The interface is a **living markdown document** — your plan. You write steps, annotate them with specs, link to other docs for context. Daemons pick up steps, read your annotations, execute, and update the checkboxes. You're always editing ahead of them.
+You're editing a document. Some parts of it are machine-addressable — task annotations, plan steps, inline instructions. When you save, the tool processes the document: finds machine work, dispatches daemons, splices results back in. The log on the right shows what's happening.
 
-Everything else — daemon logs, shell access, file views, diffs — opens as a split pane when you want it and closes when you don't. The document is always there.
+The document can be anything. A plan. An essay. A spec. A research brief. Slides. Any human-readable format that can be represented in markdown or YAML.
 
-Not a chatbot. Not an IDE. A markdown document that things happen to.
+The **plan** — a YAML checklist of steps for daemons to execute — is the default document when you open reeree on a project. But `:file essay.md` puts you in the same tool with the same capabilities on any document.
 
-## The Problem
+Not a chatbot. Not an IDE. A text editor with daemons.
 
-Every LLM coding tool is a chatbot. You type, it types back, you have a conversation. That's the wrong paradigm. You don't want to *talk* to your tools. You want to *direct* them.
+## Two kinds of documents
 
-Power users already have the right workflow: tmux for persistence, vim for editing, bash for execution, git for undo. But they're the glue. reeree makes the document the glue instead.
+### Plans (YAML) — structured work queues
 
-## How it works
+The default document. You write steps, annotate them with specs, daemons pick them up and execute.
 
-You're in a persistent terminal session, editing a markdown document:
+```yaml
+intent: make sync resilient
+steps:
+  - id: rea-a1b2
+    description: Read current sync scripts
+    status: done
+    commit: a3f2c01
+  - id: add-c3d4
+    description: Add retry logic to sync.sh
+    status: active
+    annotations:
+      - "max 3 retries, exponential backoff"
+      - "done: scripts/test-retry.sh passes"
+  - id: add-e5f6
+    description: Add heartbeat check
+    status: pending
+    files: [scripts/heartbeat.sh, scripts/watchdog.sh]
+```
+
+Commands: `:edit` to edit the plan, `:w` to save, `:go` to dispatch steps to daemons.
+
+### Markdown — everything else
+
+Any markdown file. Write prose, drop in machine tasks, save, results appear.
 
 ```markdown
-# Plan: make sync resilient
+# Ed Zitron: A History of Sins
 
-- [x] Read current sync scripts [a3f2c01]
-- [>] Add retry logic to sync.sh (daemon 1)
-  > max 3 retries, exponential backoff
-  > see [retry patterns](./docs/retry-patterns.md)
-  > done: scripts/test-retry.sh passes
-- [ ] Add heartbeat check
-  > see [heartbeat spec](./docs/heartbeat.md)
-  > done: heartbeat.sh writes timestamp, watchdog reads it
-- [ ] Wire heartbeat into cron
-  > files: scripts/crontab, scripts/watchdog.sh
+Ed Zitron has been a controversial figure in tech media for years.
+His track record includes [machine: research and list Ed Zitron's
+public failures and controversies as bullet points].
+
+The pattern across these incidents is
+[machine: analyze the pattern across the above list and write
+a one-paragraph synthesis].
 ```
 
-That's the interface. You're editing this document. The daemons are reading it too.
+Type `:w`. The `[machine: ...]` annotations dispatch daemons. While running, they show `[⏳ ...]`. When done, the results replace the annotations in-place. The document evolves.
 
-- Write a new step → next idle daemon picks it up
-- Add an annotation (`> done: tests pass`) → the daemon reads it as acceptance criteria
-- Link to another doc (`[spec](./docs/spec.md)`) → the daemon follows the link and reads it as context
-- Delete a step → the daemon that was about to start it doesn't
-- Reorder steps → execution order changes
+## The interface
 
-The document is simultaneously the spec, the status display, the steering wheel, the history, and the context system.
-
-## Peeking behind the curtain
-
-The document is home base. When you want to look at what a daemon is doing:
-
-```
-:log 1          → split pane with daemon 1's execution stream
-:shell          → split pane with a bash shell
-:diff 3         → split pane showing the diff from step 3
-:file sync.sh   → split pane showing the file
-Ctrl-w q        → close the pane, back to your document
-```
-
-Every pane is ephemeral. The document is permanent. This is vim's split/buffer model — open a view, use it, close it.
+Three panes. Document on the left. Log on the right. Chat at the bottom when you want it.
 
 ```
 ┌──────────────────────────┬──────────────────────┐
 │                          │ daemon 1 log         │
 │   Your document          │ > read sync.sh       │
-│   (still here,           │ > edit: +@retry      │
-│    still editable)       │ > shell: pytest       │
+│   (always here,          │ > edit: +@retry      │
+│    always editable)      │ > shell: pytest      │
 │                          │   PASS (3 tests)     │
-│   - [x] Read sync...    │ > git commit a3f2c01 │
-│   - [>] Add retry...    │ STATUS: done          │
-│   - [ ] Add heartbeat   │                      │
+│                          │ > git commit a3f2c01 │
+│                          │ STATUS: done         │
 │                          │                      │
 ├──────────────────────────┴──────────────────────┤
-│ NORMAL  :log 1                     2 daemons   │
+│ VIEW  :edit=edit  :go=dispatch      2 daemons   │
 └─────────────────────────────────────────────────┘
 ```
 
-Close the split. Back to full-screen document. Open a shell. Same pattern.
+## Vim modes
 
-## Key properties
+Three modes in the document, like vim:
 
-**The document is alive.** Checkboxes update as daemons complete steps. Daemon assignment shows in real time. Commit hashes appear when steps finish.
+| Mode | What it is | Status bar |
+|------|-----------|-----------|
+| **VIEW** | Rich display, read-only. Navigate with hjkl. Default. | green |
+| **EDIT** | YAML source, full vim (NORMAL/INSERT within). Via `:edit`. | blue/yellow |
+| **COMMAND** | `:` commands. | cyan |
 
-**Cross-references are context.** Link to another markdown doc and the daemon reads it. Your existing docs, specs, READMEs — they're all feedable context. Just link.
-
-**Annotations are inline specs.** Indent with `> ` under a step to give the daemon instructions, acceptance criteria, file hints. The daemon reads them before executing.
-
-**Sessions persist.** tmux-style daemon. Kill your terminal, reconnect later, document and daemons are right where you left them.
-
-**Git is undo.** Every completed step is a git commit. `:undo 3` reverts step 3. Mistakes cost nothing.
-
-**Any model.** ollama local models by default. Any OpenAI-compatible API. Switch models with `:set model deepseek-v3`. No subscriptions required.
-
-**Vim keybindings.** Normal/insert/command modes. hjkl navigation. `:` commands. Your muscle memory works.
-
-## Design Philosophy
-
-- **Dispatch, not *just* chat.** The user sends intents and commands. LLMs execute and report status. Chat exists for when you need it, but dispatch is the primary interface.
-- **Plan is the interface.** A visible, editable markdown file. Steering is spatial (move/add/delete steps), not conversational.
-- **Delegated agency.** The tool acts with the user's delegated authority. It can be autonomous within dispatch scope, but the user is always the principal. Like any process — it has agency, but it's the user's agency.
-- **Persistent sessions.** Daemon + Unix domain socket. Survives terminal death. Attach/detach like tmux.
-- **Vim modal.** Normal, insert, command modes. No emacs.
-- **Small context per step.** 32K models work fine. No 200K crutch.
-- **Git-per-step.** Every step is a commit. Undo is trivial.
-- **Personality, not anthropomorphism.** The tool has a voice. It doesn't pretend to think or feel. Same distinction as any good CLI — pandoc has personality, it doesn't have sentience.
-
-See [VALUES.md](VALUES.md) for the full values statement and [IMPLEMENTATION.md](IMPLEMENTATION.md) for how values trace to code decisions.
+`:edit` enters the YAML editing context with full vim keybindings — `i` to insert, Escape to stop inserting, hjkl to navigate. `:w` saves and returns to VIEW. `:q` discards.
 
 ## Commands
 
 ```
-# Terminal
-reeree                          # start or resume session
-reeree "intent goes here"       # start with generated plan
-reeree --setup                  # launch setup wizard
-reeree ls                       # list sessions
-reeree kill                     # kill a session
+# Editing
+:edit                       enter plan editing mode (YAML, full vim)
+:w                          save document (exit edit mode if editing)
+:q                          quit (or discard edits if editing)
 
-# Inside the document (command mode)
-:go                             # dispatch next 2 pending steps
-:w                              # dispatch up to cursor / save
-:W                              # dispatch ALL pending steps
-:add "step description"         # add step to plan
-:del N                          # delete step N
-:move N M                       # move step N to position M
-:diff [N]                       # show diff for step N
-:log [N]                        # show daemon N's log
-:file <path>                    # show a file in exec log
-:undo                           # git revert last step
-:set autonomy low|medium|high   # approval level for writes
-:set model <name>               # change LLM model
-:chat                           # toggle chat (executor daemon)
-:chat coherence                 # chat with coherence daemon
-:close                          # close chat panel
-:cd <path>                      # push scope to subrepo
-:cd ..                          # pop scope to parent
-:scope                          # show scope stack
-:cohere [path|glob]             # run coherence check
-:propagate                      # crawl cross-references
-:pause N                        # pause daemon N
-:resume N                       # resume paused daemon N
-:kill N                         # kill daemon N (and children)
-:setup                          # re-run setup wizard
-:q                              # quit (autosave)
-:q!                             # force quit (no save)
-:wq                             # save and quit
+# Dispatch
+:go                         dispatch next 2 pending steps
+:go all / :W                dispatch ALL pending steps
+:go N                       dispatch step N
+
+# Steps
+:add "description"          add a step to the plan
+:del N                      delete step N
+:move N M                   move step N to position M
+
+# Views
+:file path                  open a project file (vim editing, machine tasks)
+:diff [N]                   show diff for step N
+:log [N]                    show daemon N's log
+
+# Communication
+:chat                       toggle chat panel (talk to executor daemon)
+:chat coherence             chat with coherence daemon
+
+# Daemon control
+:pause N / :resume N        pause/resume daemon
+:kill N                     kill daemon and children
+
+# Configuration
+:set model <name>           change LLM model
+:set autonomy <level>       low|medium|high|full
+:setup                      re-run setup wizard
+
+# Scope
+:cd path                    push scope to subdirectory
+:cd ..                      pop scope to parent
+
+# Analysis
+:cohere [path|glob]         run coherence check
+:propagate                  crawl cross-references
+
+# Session
+:undo                       git revert last step
+:q / :q! / :wq              quit / force quit / save+quit
+:help                       command reference
 ```
+
+## Machine tasks
+
+Any document can contain inline machine task annotations:
+
+```
+[machine: description of what to do]
+```
+
+On `:w`, the tool finds these annotations, dispatches daemons, and splices results back into the document. The annotation disappears. The result takes its place.
+
+This works in any markdown file opened with `:file`. The plan is one kind of machine-addressable document. An essay is another. Same tool, same capabilities.
+
+## Key properties
+
+**The document is alive.** Plan checkboxes update as daemons complete steps. Machine task results appear inline. The document evolves.
+
+**Any document works.** Plans, essays, specs, research briefs — anything in markdown or YAML. Machine tasks work everywhere.
+
+**Chat when you need it.** `:chat` opens a conversation with the executor daemon. It's there for when you need to talk through something. But dispatch is the primary interface — you write, the tool executes.
+
+**Cross-references are context.** Link to another markdown doc and the daemon reads it. Your existing docs, specs, READMEs — they're all feedable context.
+
+**Sessions persist.** tmux-style daemon. Kill your terminal, reconnect later, document and daemons are right where you left them.
+
+**Git is undo.** Every completed step is a git commit. `:undo` reverts. Mistakes cost nothing.
+
+**Any model.** ollama local models by default. Any OpenAI-compatible API. No subscriptions required.
+
+**Vim keybindings.** Your muscle memory works.
+
+## Design Philosophy
+
+- **Document is the interface.** Any document can be machine-addressable. The plan is a prominent example, not the only one.
+- **Dispatch, not just chat.** You write intents and annotations. Daemons execute. Chat exists for when you need it, but writing is the primary interface.
+- **Delegated agency.** The tool acts with your authority, not its own. You dispatch, it executes within scope.
+- **Overlap, not turn-taking.** You edit ahead. Daemons execute behind. Nobody waits.
+- **Persistence.** Sessions survive terminal death. Work survives everything (git).
+- **Sufficiency.** $0 with local models. 32K context works fine.
+- **Personality, not anthropomorphism.** The tool has a voice. It doesn't pretend to think or feel.
+
+See [VALUES.md](VALUES.md) for the full values statement and [IMPLEMENTATION.md](IMPLEMENTATION.md) for how values trace to code decisions.
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────┐
-│              reeree TUI (Textual)             │
-│  ┌─────────────────┬────────────────────┐    │
-│  │   Plan Editor    │  Daemon Tree       │    │
-│  │   (vim modal)    │  ● d1 step 3       │    │
-│  │                  │  ├── d2 coherence  │    │
-│  │                  │  └── d3 step 4     │    │
-│  │                  ├────────────────────┤    │
-│  │                  │  Exec Log          │    │
-│  │                  ├────────────────────┤    │
-│  │                  │  Chat Panel        │    │
-│  └─────────────────┴────────────────────┘    │
-│                                              │
-│  ┌────────────────────────────────────────┐  │
-│  │         Daemon Registry                 │  │
-│  │  spawn / kill / pause / resume / tree  │  │
-│  └────────────┬───────────────────────────┘  │
-│               │                              │
-│  ┌────────────┴───────────────────────────┐  │
-│  │         Model Router                    │  │
-│  │  classify → tier → route to model      │  │
-│  └────────────┬───────────────────────────┘  │
-│               │                              │
-│  ┌────────┐ ┌────────┐ ┌────────┐           │
-│  │Step    │ │Step    │ │Coherence│           │
-│  │Daemon 1│ │Daemon 2│ │Daemon 3 │           │
-│  │(multi- │ │(multi- │ │(check   │           │
-│  │ turn)  │ │ turn)  │ │ docs)   │           │
-│  └───┬────┘ └───┬────┘ └───┬────┘           │
-│      │          │           │                │
-│  ┌───┴──────────┴───────────┴──────────┐     │
-│  │     LLM API (model per tier)        │     │
-│  │  reasoning: big / coding: mid / fast │     │
-│  └─────────────────────────────────────┘     │
-└──────────────────────────────────────────────┘
-```
-
-## Daemon Types
-
-Executor daemons are one type. The framework manages any persistent LLM process:
-
-| Type | Trigger | Reads | Writes | Always-on? |
-|------|---------|-------|--------|------------|
-| Executor | dispatched (:go) | plan step + focused context | code, shell, git | no |
-| Coherence | triggered (:propagate, :cohere, on-save) | linked doc tree | conflict flags, update proposals | no |
-| State | always-on | user activity, inputs, patterns | state.md assessment | yes |
-| Forecast | scheduled/triggered | calendar, state, history | forecast.md | no |
-| Orchestrator | on dispatch | step description, model registry | routing decision, cost estimate | no |
-
-All daemons share the same shape:
-- Persistent LLM process with focused context
-- Specific domain and instruction set
-- Read/write interface to files on disk
-- Visible output (split pane in TUI)
-- User can read, edit, override any daemon's output
-
-Daemons are processes. Some are short-lived (execute a step and exit), some are persistent (coherence, state monitoring). Same UX model as Unix processes — some run in the foreground, some in the background, some are long-lived services.
-
-## Project Structure
-
-```
 reeree/
-├── README.md              # This file (project overview + dev guide)
-├── CLAUDE.md              # AI assistant development context
-├── pyproject.toml         # Package config
-├── VALUES.md              # Why we build (8 principles + red lines)
-├── IMPLEMENTATION.md      # What we've decided (ADR index + current state)
-├── PROJECT_PLAN.md        # What's next (8-phase roadmap)
-├── COST.md / REVENUE.md / PROFIT.md  # Economics
-├── docs/                  # VDSE documentation hub
-│   ├── README.md          # Navigation hub
-│   ├── GASTOWN_COMPARISON.md
-│   ├── keyboard-shortcuts.md # Complete keybinding reference
-│   └── strategic/decisions/  # 14 standalone ADRs
-├── reeree/                # Python package (~4,000 lines)
-│   ├── cli.py             # Entry point — start/attach/ls/kill sessions
-│   ├── config.py          # Configuration (single model + multi-model routing)
-│   ├── context.py         # Load focused context per step
-│   ├── daemon_executor.py # Multi-turn step execution (read→edit→verify loop)
-│   ├── daemon_registry.py # Daemon lifecycle management (hierarchy, pause/kill)
-│   ├── executor.py        # File edits, shell commands, git ops, safety
-│   ├── llm.py             # LLM API interface (OpenAI-compatible, model overrides)
-│   ├── message_bus.py     # Inter-daemon communication (typed messages)
-│   ├── plan.py            # Plan/Step data model + YAML serialization
-│   ├── planner.py         # Intent → step list decomposition
-│   ├── voice.py           # Voice specification (STE-derived clear prose rules)
-│   ├── plugin.py          # Plugin base class + entry point discovery
-│   ├── router.py          # Model routing (reasoning/coding/fast tiers)
-│   ├── session.py         # Session state serialization
-│   └── tui/               # TUI components
-│       ├── app.py         # Main Textual application (vim modal, commands)
-│       ├── daemon_tree.py # Hierarchical daemon display widget
-│       └── setup_screen.py # First-run setup wizard ("character creation")
-├── tests/                 # Test suite (377 passing, 19 xfailed)
-├── sandbox/               # Test project for development
-└── .gitignore
+├── cli.py              # Entry point
+├── config.py           # Configuration
+├── context.py          # Focused context per step
+├── daemon_executor.py  # Multi-turn step execution
+├── daemon_registry.py  # Daemon lifecycle (hierarchy, pause/kill)
+├── executor.py         # File edits, shell, git, safety
+├── llm.py              # LLM API (OpenAI-compatible)
+├── machine_tasks.py    # Inline [machine: ...] annotation parser
+├── message_bus.py      # Inter-daemon communication
+├── plan.py             # Plan/Step data model + YAML serialization
+├── planner.py          # Intent → step list decomposition
+├── voice.py            # Voice specification
+├── plugin.py           # Plugin base class
+├── router.py           # Model routing (reasoning/coding/fast)
+├── session.py          # Session state serialization
+└── tui/
+    ├── app.py          # Main application (vim modal, commands)
+    ├── daemon_tree.py  # Daemon display widget
+    └── setup_screen.py # Setup wizard
 ```
 
 ## Development
 
-### Setup
 ```bash
 source /mnt/vorkosigan_data_v2/vorkosigan/.venv/bin/activate
 cd /mnt/vorkosigan_data_v2/vorkosigan/private/reeree
 pip install -e .
-```
 
-### Running
-```bash
-# Launch TUI with a new plan
-reeree --project sandbox "add error handling to the scraper"
-
-# Launch TUI, resume existing plan
-reeree --project sandbox
-
-# Inside TUI: NORMAL mode by default
-#   i         → INSERT mode (edit the plan)
-#   Escape    → back to NORMAL
-#   :         → COMMAND mode
-#   :go       → dispatch daemons for pending steps
-#   :help     → full command reference
-```
-
-### Testing
-```bash
-# Run all tests
+# Run tests (396 passing, 19 xfailed)
 python -m pytest tests/ -v
 
-# Run just unit tests (no API calls)
-python -m pytest tests/ -v -k "not (test_basic_response or test_json_response or test_system_prompt or test_edit_step or test_write_step or test_logging_callback)"
+# Launch TUI
+reeree --project sandbox "add error handling to the scraper"
 
-# Run integration tests (requires together.ai key at ~/.config/together/api_key)
-python -m pytest tests/test_daemon_executor.py tests/test_llm.py -v
-
-# See xfail tests (unimplemented features)
-python -m pytest tests/test_unimplemented.py -v
+# Inside TUI: VIEW mode by default
+#   :edit     → edit plan (YAML, full vim)
+#   :go       → dispatch daemons
+#   :chat     → talk to executor
+#   :help     → command reference
 ```
-
-### Self-testing from Claude Code
-The TUI requires a real terminal, but the daemon executor can be tested headlessly:
-```python
-import asyncio
-from pathlib import Path
-from reeree.config import Config
-from reeree.plan import Step
-from reeree.daemon_executor import dispatch_step
-
-async def test():
-    config = Config()
-    step = Step(description="Add a docstring to main()", files=["scraper.py"])
-    result = await dispatch_step(step=step, step_index=0, project_dir=Path("sandbox"), config=config, on_log=print)
-    print(result)
-
-asyncio.run(test())
-```
-
-### Dependencies
-- Python 3.11+
-- textual (TUI), httpx (LLM API), click (CLI), gitpython (git), tree-sitter-markdown (syntax)
-- LLM: together.ai with Qwen3-Coder-480B-A35B-Instruct-FP8 (default), any OpenAI-compatible API
-- API key: `~/.config/together/api_key` or `TOGETHER_API_KEY` env var
-
-## Conventions
-- Keep it simple. Target ~3-5K lines total, not a framework.
-- No over-engineering. Build what's needed for the dispatch console UX.
-- **Markdown and YAML are the lingfranks.** Plan files are markdown. Structured daemon communication uses YAML. No JSON schemas, no custom DSLs, no binary protocols. These two formats cover everything — human-readable, machine-parseable, universally understood.
-- The session daemon is simple. Socket server, session state, daemon pool. Not Kubernetes.
-
-## Values
-
-Built with [Values-Driven Systems Engineering](https://github.com/robbymeals/values-driven-systems-engineering). See [VALUES.md](VALUES.md) for the full statement.
-
-- **Delegated agency** → The tool acts with your authority, not its own. You dispatch, it executes within scope.
-- **Document is the interface** → All state is visible, editable prose. Nothing hidden.
-- **Overlap, not turn-taking** → You edit ahead. Daemons execute behind. Nobody waits.
-- **Persistence** → Sessions survive terminal death. Work survives everything (git).
-- **Sufficiency** → $0 with local models. 32K context works fine.
-- **Personality, not anthropomorphism** → The tool has a voice. It doesn't pretend to think or feel.
 
 ## Status
 
-Active development. 377 tests passing. Core dispatch loop, multi-turn daemons, daemon hierarchy, model routing, setup wizard, and TUI all working. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
+Active development. 396 tests passing. Core dispatch loop, multi-turn daemons, daemon hierarchy, model routing, inline machine tasks, setup wizard, and TUI all working. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
 
 ---
 
@@ -340,7 +239,6 @@ Active development. 377 tests passing. Core dispatch loop, multi-turn daemons, d
 > - [VALUES.md](VALUES.md) — Why we build this way
 > - [IMPLEMENTATION.md](IMPLEMENTATION.md) — How values trace to code decisions
 > - [PROJECT_PLAN.md](PROJECT_PLAN.md) — What's next (8-phase roadmap)
-> - [POC_PLAN.md](POC_PLAN.md) — The 3-week proof of concept
 > - [COST.md](COST.md) — What it costs ($0 local, $5-15 cloud)
 > - [REVENUE.md](REVENUE.md) — How it might sustain itself
 > - [PROFIT.md](PROFIT.md) — What success looks like

@@ -1,17 +1,20 @@
 # Keyboard Shortcuts
 
-Reeree uses vim-style modal editing. Three modes: NORMAL (navigation), INSERT (editing), COMMAND (`:` commands). A fourth mode activates when a file is open in the viewer overlay.
+Reeree uses vim-style modal editing. Three modes: VIEW (rich display), EDIT (YAML editing), COMMAND (`:` commands). VIEW is the default — it shows the plan in a rich, read-only display. EDIT mode drops into raw YAML with vim-style NORMAL/INSERT sub-modes.
 
 ## Modes
 
 | Mode | Status bar | How to enter | How to exit |
 |------|-----------|-------------|------------|
-| NORMAL | `[NORMAL]` green | Default; `Escape` from INSERT | — |
-| INSERT | `[INSERT]` yellow | `i`, `a`, or `o` from NORMAL | `Escape` |
-| COMMAND | `[COMMAND]` cyan | `:` from NORMAL | `Enter` (execute) or `Escape` (cancel) |
+| VIEW | `[VIEW]` green | Default; `Escape` from EDIT NORMAL | — |
+| EDIT NORMAL | `[EDIT]` blue | `:edit` from VIEW | `Escape` → VIEW |
+| EDIT INSERT | `[INSERT]` yellow | `i`, `a`, or `o` from EDIT NORMAL | `Escape` → EDIT NORMAL |
+| COMMAND | `[COMMAND]` cyan | `:` from VIEW or EDIT NORMAL | `Enter` (execute) or `Escape` (cancel) |
 | FILE VIEWER | Shows file path | `:file path` | `:q` |
 
-## NORMAL Mode
+## VIEW Mode
+
+The default mode. Plan is displayed as a rich, read-only view. No text editing — navigation and commands only.
 
 ### Navigation
 | Key | Action |
@@ -26,28 +29,41 @@ Reeree uses vim-style modal editing. Three modes: NORMAL (navigation), INSERT (e
 ### Mode switching
 | Key | Action |
 |-----|--------|
-| `i` | Enter INSERT mode |
-| `a` | Enter INSERT mode (synonym for `i`) |
-| `o` | New line + INSERT mode |
 | `:` | Enter COMMAND mode |
-
-### Pane focus
-| Key | Action |
-|-----|--------|
 | `Tab` | Cycle focus: Plan → Exec Log → Chat (if open) → Plan |
 | `Ctrl+W` | Same as Tab |
 
-## INSERT Mode
+Note: `i` is **not** bound in VIEW mode. Use `:edit` to enter EDIT mode.
+
+## EDIT Mode
+
+Entered via `:edit`. The plan is shown as raw YAML. EDIT mode has two sub-modes that mirror vim behavior.
+
+### EDIT NORMAL (read-only YAML navigation)
+| Key | Action |
+|-----|--------|
+| `j` | Cursor down |
+| `k` | Cursor up |
+| `h` | Cursor left |
+| `l` | Cursor right |
+| `g` | Start of line |
+| `G` | End of line |
+| `i` | Enter INSERT sub-mode |
+| `a` | Enter INSERT sub-mode (synonym for `i`) |
+| `o` | New line + INSERT sub-mode |
+| `Escape` | Return to VIEW mode |
+
+### EDIT INSERT (typing into YAML)
 
 Full text editing. Arrow keys, backspace, typing all work normally. `h`/`j`/`k`/`l` are **not** intercepted — they type literal characters.
 
 | Key | Action |
 |-----|--------|
-| `Escape` | Return to NORMAL mode (parses YAML back into plan) |
+| `Escape` | Return to EDIT NORMAL (parses YAML back into plan) |
 
 ## COMMAND Mode
 
-Opened by pressing `:` in NORMAL mode. Command line appears at bottom.
+Opened by pressing `:` in VIEW or EDIT NORMAL mode. Command line appears at bottom.
 
 | Key | Action |
 |-----|--------|
@@ -60,14 +76,16 @@ Command history holds up to 100 entries per session.
 
 ## File Viewer
 
-Opened via `:file path`. Mirrors NORMAL/INSERT bindings for navigation and editing. These commands are intercepted:
+Opened via `:file path`. Mirrors EDIT NORMAL/INSERT bindings for navigation and editing. These commands are intercepted:
 
 | Command | Action |
 |---------|--------|
 | `:q` | Close viewer, return to plan |
 | `:q!` | Force close viewer |
-| `:w` | Save file to disk |
-| `:wq` | Save and close |
+| `:w` | Save file to disk; also processes any `[machine: ...]` annotations as machine tasks |
+| `:wq` | Save, process machine tasks, and close |
+
+`[machine: ...]` annotations are inline markers in files that describe tasks for the daemon to execute. When the file is saved with `:w`, these annotations are extracted and dispatched automatically.
 
 Other commands (`:chat`, `:help`, etc.) pass through normally.
 
@@ -86,18 +104,21 @@ Special text commands: `exit`, `close`, `quit`, `q` close the panel. `done` save
 
 # Commands Reference
 
-## Plan Execution
+## Saving & Dispatching
 
 | Command | Action |
 |---------|--------|
-| `:w` | Execute plan up to cursor step |
-| `:w N` | Execute step N only |
-| `:w 1 3 5` | Execute specific steps |
-| `:w "description"` | Create new step and execute it |
-| `:w N "annotation"` | Annotate step N, then execute |
-| `:W` | Execute ALL pending steps |
-| `:W 1 3 5` | Execute specific steps |
-| `:go` | Execute next 2 pending steps |
+| `:w` | Save — exits edit mode if editing; saves file if in file viewer (also processes machine tasks) |
+| `:go` | Dispatch next pending step |
+| `:go N` | Dispatch step N |
+| `:go all` | Dispatch ALL pending steps |
+| `:W` | Dispatch ALL pending steps (alias for `:go all`) |
+
+## Plan Editing
+
+| Command | Action |
+|---------|--------|
+| `:edit` | Enter EDIT mode (raw YAML editing) |
 
 ## Step Management
 

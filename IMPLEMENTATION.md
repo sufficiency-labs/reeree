@@ -8,6 +8,7 @@
 | [Delegated Agency](VALUES.md#1-delegated-agency) | Autonomy levels (low/medium/high) control delegation breadth | User sets how much authority the process has per session |
 | [Plan Is the Interface](VALUES.md#2-plan-is-the-interface) | Plan stored as markdown file, parsed/written by both user and daemons | Visible, editable with any text editor, diffable in git |
 | [Plan Is the Interface](VALUES.md#2-plan-is-the-interface) | Step annotations (`> ` lines) carry specs inline | User writes acceptance criteria directly in the plan |
+| [Plan Is the Interface](VALUES.md#2-plan-is-the-interface) | Machine tasks inline in any document — plan is the prominent example | Any document is machine-addressable, not just the plan file |
 | [Overlap, Not Turn-Taking](VALUES.md#3-overlap-not-turn-taking) | Async daemon pool with parallel dispatch | Multiple daemons execute simultaneously |
 | [Overlap, Not Turn-Taking](VALUES.md#3-overlap-not-turn-taking) | Plan is editable while daemons execute | User is always ahead, editing future steps |
 | [Persistence Without Fragility](VALUES.md#4-persistence-without-fragility) | Unix domain socket daemon/client architecture (planned) | Session survives terminal death, like tmux |
@@ -50,6 +51,7 @@ All ADRs are standalone files in [`docs/strategic/decisions/`](docs/strategic/de
 | [ADR-012](docs/strategic/decisions/ADR-012-daemon-personality-evolution.md) | Daemon personality evolution | Proposed | Delegated Agency, No Anthropomorphism |
 | [ADR-013](docs/strategic/decisions/ADR-013-pluggable-execution-backends.md) | Pluggable execution backends | Proposed | Sufficiency, No Lock-in |
 | [ADR-014](docs/strategic/decisions/ADR-014-simplified-technical-english.md) | Clear Technical English voice spec | Proposed | No Anthropomorphism, Sufficiency |
+| ADR-015 | Document-as-Interface — inline machine tasks, any document is machine-addressable | Implemented | Plan Is Interface, Overlap |
 
 ## Current State (as of 2026-03-06)
 
@@ -73,6 +75,7 @@ All ADRs are standalone files in [`docs/strategic/decisions/`](docs/strategic/de
 | Plugin system | `plugin.py` | New — base class, discovery, hook dispatch |
 | Message bus | `message_bus.py` | New — inter-daemon communication |
 | Session serialization | `session.py` | New — Plan + Registry → JSON → disk |
+| Machine tasks | `machine_tasks.py` | New — inline task extraction from any document |
 
 ### What's Not Built Yet
 
@@ -81,13 +84,18 @@ All ADRs are standalone files in [`docs/strategic/decisions/`](docs/strategic/de
 | Daemon persistence (socket server) | ADR-001 | Phase 2 |
 | Attach/detach (tmux-style) | ADR-001 | Phase 2 |
 | Crash recovery | ADR-001 | Phase 2 |
-| Parallel daemon dispatch | — | Phase 5 |
+| Parallel daemon dispatch (step IDs + StatusOverlay partially address this) | — | Phase 5 |
 | File conflict detection | — | Phase 5 |
 | Vim motions (d, y, p, visual mode) | — | Phase 4 |
 | Plugin ecosystem | ADR-009 | Phase 8 |
 
 ### Recent Changes
 
+- **Machine tasks** — inline machine tasks in any document via `machine_tasks.py`; any document is machine-addressable
+- **Three-mode model** — VIEW/NORMAL/INSERT modes replace the two-mode normal/insert split
+- **Step IDs** — stable identifiers for steps, infrastructure for parallel dispatch
+- **StatusOverlay** — overlay widget for daemon/step status display
+- **`:w`/`:go` split** — `:w` = save/cohere, `:go` = dispatch
 - **Daemon registry refactor** (3b26d3e) — replaced ad-hoc `_daemons` dict with `DaemonRegistry` class. `app.py` now uses `self._daemon_registry`.
 - **Model routing** (977d246) — tier-based classification routes steps to reasoning/coding/fast models
 - **Daemon tree view** (417c6ce) — hierarchical display replaces flat progress indicators
