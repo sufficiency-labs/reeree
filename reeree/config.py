@@ -17,12 +17,20 @@ def _load_api_key() -> str:
     return ""
 
 
+def _default_backend() -> str:
+    """Pick default backend: claude-code if available, else together."""
+    import shutil
+    if shutil.which("claude") and os.environ.get("ANTHROPIC_API_KEY"):
+        return "claude-code"
+    return "together"
+
+
 @dataclass
 class Config:
     """Runtime configuration."""
 
     # Backend: "together" (OpenAI-compatible API) or "claude-code" (subprocess)
-    backend: str = "together"
+    backend: str = field(default_factory=_default_backend)
 
     # LLM settings (for "together" backend)
     api_base: str = "https://api.together.xyz/v1"
@@ -53,7 +61,10 @@ class Config:
     routing: dict = field(default_factory=dict)
 
     def is_first_run(self) -> bool:
-        """True if no config file exists or no API key configured."""
+        """True if no usable backend configured."""
+        if self.backend == "claude-code":
+            import shutil
+            return not (shutil.which("claude") and os.environ.get("ANTHROPIC_API_KEY"))
         return not self.api_key and not self.models
 
     def __post_init__(self):

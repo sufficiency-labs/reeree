@@ -25,13 +25,16 @@ from reeree.daemon_registry import DaemonKind, DaemonStatus
 
 def _cfg() -> Config:
     c = Config.__new__(Config)
+    c.backend = "together"
     c.api_base = "https://api.together.xyz/v1"
     c.model = "test-model"
     c.api_key = "test-key-for-testing"
+    c.claude_model = "sonnet"
     c.autonomy = "medium"
     c.project_dir = "."
     c.plan_file = ".reeree/plan.yaml"
     c.max_context_tokens = 24000
+    c.default_doc = ""
     c.models = {}
     c.routing = {}
     return c

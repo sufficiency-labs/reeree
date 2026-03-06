@@ -23,13 +23,16 @@ from reeree.tui.app import ReereeApp, PlanEditor, StatusBar, CommandScreen
 def _make_config() -> Config:
     """Config with no API key — pure UI testing, no LLM calls."""
     c = Config.__new__(Config)
+    c.backend = "together"
     c.api_base = "https://api.together.xyz/v1"
     c.model = "test-model"
     c.api_key = "test-key-for-testing"  # non-empty to prevent setup wizard
+    c.claude_model = "sonnet"
     c.autonomy = "medium"
     c.project_dir = "."
     c.plan_file = ".reeree/plan.yaml"
     c.max_context_tokens = 24000
+    c.default_doc = ""
     c.models = {}
     c.routing = {}
     return c
