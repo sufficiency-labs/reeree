@@ -176,114 +176,179 @@ class PlanEditor(TextArea):
             app.query_one("#status-bar", StatusBar).mode = "EDIT"
             app._flog.debug("Mode: EDIT (NORMAL)")
 
+    def _consume(self, event: events.Key) -> None:
+        """Prevent default and stop propagation."""
+        event.prevent_default()
+        event.stop()
+
     def on_key(self, event: events.Key) -> None:
         if self.vim_mode == "VIEW":
-            # VIEW mode: read-only rich display, navigate + commands only
-            if event.key == "colon":
-                app = self.app
-                if isinstance(app, ReereeApp):
-                    app.action_command_mode()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "j":
-                self.action_cursor_down()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "k":
-                self.action_cursor_up()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "h":
-                self.action_cursor_left()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "l":
-                self.action_cursor_right()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "g":
-                self.action_cursor_line_start()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "G":
-                self.action_cursor_line_end()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "tab":
-                app = self.app
-                if isinstance(app, ReereeApp):
-                    app._focus_next_pane()
-                event.prevent_default()
-                event.stop()
-            # Block all other keys in VIEW — no accidental typing
-            elif event.key not in ("escape", "ctrl+w", "ctrl+c"):
-                event.prevent_default()
-                event.stop()
-
+            self._handle_view_key(event)
         elif self.vim_mode == "NORMAL":
-            # NORMAL mode: YAML displayed, read-only, full vim navigation
-            if event.key == "i":
-                self._enter_insert_mode()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "a":
-                self._enter_insert_mode()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "o":
-                self._enter_insert_mode()
-                self.action_cursor_line_end()
-                self.read_only = False
-                self.insert("\n")
-                event.prevent_default()
-                event.stop()
-            elif event.key == "colon":
-                app = self.app
-                if isinstance(app, ReereeApp):
-                    app.action_command_mode()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "j":
-                self.action_cursor_down()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "k":
-                self.action_cursor_up()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "h":
-                self.action_cursor_left()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "l":
-                self.action_cursor_right()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "g":
-                self.action_cursor_line_start()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "G":
-                self.action_cursor_line_end()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "escape":
-                # Escape in NORMAL exits back to VIEW
-                self.exit_edit_mode()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "tab":
-                app = self.app
-                if isinstance(app, ReereeApp):
-                    app._focus_next_pane()
-                event.prevent_default()
-                event.stop()
-
+            self._handle_normal_key(event)
         elif self.vim_mode == "INSERT":
             if event.key == "escape":
                 self._enter_normal_mode()
-                event.prevent_default()
-                event.stop()
+                self._consume(event)
+
+    def _handle_view_key(self, event: events.Key) -> None:
+        """VIEW mode: read-only rich display, navigate + commands only."""
+        nav = self._handle_navigation(event)
+        if nav:
+            return
+        if event.key == "colon":
+            app = self.app
+            if isinstance(app, ReereeApp):
+                app.action_command_mode()
+            self._consume(event)
+        elif event.key == "tab":
+            app = self.app
+            if isinstance(app, ReereeApp):
+                app._focus_next_pane()
+            self._consume(event)
+        # Block all other keys in VIEW — no accidental typing
+        elif event.key not in ("escape", "ctrl+w", "ctrl+c"):
+            self._consume(event)
+
+    def _handle_normal_key(self, event: events.Key) -> None:
+        """NORMAL mode: YAML displayed, read-only, full vim navigation + editing commands."""
+        nav = self._handle_navigation(event)
+        if nav:
+            return
+        # --- Insert entry points ---
+        if event.key == "i":
+            # Insert before cursor
+            self._enter_insert_mode()
+            self._consume(event)
+        elif event.key == "I":
+            # Insert at beginning of line
+            self.action_cursor_line_start()
+            self._enter_insert_mode()
+            self._consume(event)
+        elif event.key == "a":
+            # Append after cursor
+            self.action_cursor_right()
+            self._enter_insert_mode()
+            self._consume(event)
+        elif event.key == "A":
+            # Append at end of line
+            self.action_cursor_line_end()
+            self._enter_insert_mode()
+            self._consume(event)
+        elif event.key == "o":
+            # Open line below
+            self.action_cursor_line_end()
+            self._enter_insert_mode()
+            self.insert("\n")
+            self._consume(event)
+        elif event.key == "O":
+            # Open line above
+            self.action_cursor_line_start()
+            self._enter_insert_mode()
+            self.insert("\n")
+            self.action_cursor_up()
+            self._consume(event)
+        # --- Deletion ---
+        elif event.key == "x":
+            # Delete char under cursor
+            self.read_only = False
+            self.action_delete_right()
+            self.read_only = True
+            self._consume(event)
+        elif event.key == "d":
+            # 'd' starts a pending delete — next 'd' deletes line
+            self._pending_d = True
+            self._consume(event)
+        # --- Undo/redo ---
+        elif event.key == "u":
+            self.read_only = False
+            self.action_undo()
+            self.read_only = True
+            self._consume(event)
+        elif event.key == "ctrl+r":
+            self.read_only = False
+            self.action_redo()
+            self.read_only = True
+            self._consume(event)
+        # --- Commands ---
+        elif event.key == "colon":
+            app = self.app
+            if isinstance(app, ReereeApp):
+                app.action_command_mode()
+            self._consume(event)
+        elif event.key == "escape":
+            self.exit_edit_mode()
+            self._consume(event)
+        elif event.key == "tab":
+            app = self.app
+            if isinstance(app, ReereeApp):
+                app._focus_next_pane()
+            self._consume(event)
+
+    def _handle_navigation(self, event: events.Key) -> bool:
+        """Handle navigation keys shared between VIEW and NORMAL modes.
+
+        Returns True if the key was handled.
+        """
+        # Check pending 'd' for 'dd' (delete line)
+        if getattr(self, "_pending_d", False) and self.vim_mode == "NORMAL":
+            self._pending_d = False
+            if event.key == "d":
+                # dd — delete current line
+                self.read_only = False
+                self.action_cursor_line_start()
+                self.action_cursor_line_end()
+                # Select and delete the line
+                row, col = self.cursor_location
+                lines = self.text.split("\n")
+                if row < len(lines):
+                    del lines[row]
+                    self.text = "\n".join(lines)
+                    if row >= len(lines) and row > 0:
+                        self.cursor_location = (row - 1, 0)
+                    else:
+                        self.cursor_location = (row, 0)
+                self.read_only = True
+                self._consume(event)
+                return True
+            # If not 'd', clear pending and fall through
+
+        key = event.key
+        if key == "j":
+            self.action_cursor_down()
+        elif key == "k":
+            self.action_cursor_up()
+        elif key == "h":
+            self.action_cursor_left()
+        elif key == "l":
+            self.action_cursor_right()
+        elif key == "w":
+            self.action_cursor_word_right()
+        elif key == "b":
+            self.action_cursor_word_left()
+        elif key == "0" or key == "home":
+            self.action_cursor_line_start()
+        elif key == "dollar" or key == "end":
+            self.action_cursor_line_end()
+        elif key == "g":
+            # gg — go to top (simplified: single g goes to top)
+            self.cursor_location = (0, 0)
+        elif key == "G":
+            # G — go to bottom
+            lines = self.text.split("\n")
+            self.cursor_location = (max(0, len(lines) - 1), 0)
+        elif key == "ctrl+d":
+            # Half-page down
+            for _ in range(15):
+                self.action_cursor_down()
+        elif key == "ctrl+u":
+            # Half-page up
+            for _ in range(15):
+                self.action_cursor_up()
+        else:
+            return False
+        self._consume(event)
+        return True
 
 
 class StatusBar(Static):
@@ -371,61 +436,121 @@ class FileViewer(TextArea):
         super().load_text(content)
         self.read_only = was_readonly
 
+    def _consume(self, event: events.Key) -> None:
+        event.prevent_default()
+        event.stop()
+
+    def _enter_insert(self) -> None:
+        self.read_only = False
+        self.vim_mode = "INSERT"
+        app = self.app
+        if isinstance(app, ReereeApp):
+            app.query_one("#status-bar", StatusBar).mode = "INSERT"
+
+    def _exit_insert(self) -> None:
+        self.read_only = True
+        self.vim_mode = "NORMAL"
+        app = self.app
+        if isinstance(app, ReereeApp):
+            app.query_one("#status-bar", StatusBar).mode = "NORMAL"
+
     def on_key(self, event: events.Key) -> None:
         if self.vim_mode == "NORMAL":
+            # Navigation (shared keys)
+            nav = self._handle_nav(event)
+            if nav:
+                return
+            # Insert entry points
             if event.key == "i":
+                self._enter_insert()
+                self._consume(event)
+            elif event.key == "I":
+                self.action_cursor_line_start()
+                self._enter_insert()
+                self._consume(event)
+            elif event.key == "a":
+                self.action_cursor_right()
+                self._enter_insert()
+                self._consume(event)
+            elif event.key == "A":
+                self.action_cursor_line_end()
+                self._enter_insert()
+                self._consume(event)
+            elif event.key == "o":
+                self.action_cursor_line_end()
+                self._enter_insert()
+                self.insert("\n")
+                self._consume(event)
+            elif event.key == "O":
+                self.action_cursor_line_start()
+                self._enter_insert()
+                self.insert("\n")
+                self.action_cursor_up()
+                self._consume(event)
+            elif event.key == "x":
                 self.read_only = False
-                self.vim_mode = "INSERT"
-                app = self.app
-                if isinstance(app, ReereeApp):
-                    app.query_one("#status-bar", StatusBar).mode = "INSERT"
-                event.prevent_default()
-                event.stop()
+                self.action_delete_right()
+                self.read_only = True
+                self._consume(event)
+            elif event.key == "u":
+                self.read_only = False
+                self.action_undo()
+                self.read_only = True
+                self._consume(event)
+            elif event.key == "ctrl+r":
+                self.read_only = False
+                self.action_redo()
+                self.read_only = True
+                self._consume(event)
             elif event.key == "colon":
                 app = self.app
                 if isinstance(app, ReereeApp):
                     app.action_command_mode()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "j":
-                self.action_cursor_down()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "k":
-                self.action_cursor_up()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "h":
-                self.action_cursor_left()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "l":
-                self.action_cursor_right()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "g":
-                self.action_cursor_line_start()
-                event.prevent_default()
-                event.stop()
-            elif event.key == "G":
-                self.action_cursor_line_end()
-                event.prevent_default()
-                event.stop()
+                self._consume(event)
             elif event.key == "tab":
                 app = self.app
                 if isinstance(app, ReereeApp):
                     app._focus_next_pane()
-                event.prevent_default()
-                event.stop()
+                self._consume(event)
         elif self.vim_mode == "INSERT":
             if event.key == "escape":
-                self.read_only = True
-                self.vim_mode = "NORMAL"
-                app = self.app
-                if isinstance(app, ReereeApp):
-                    app.query_one("#status-bar", StatusBar).mode = "NORMAL"
-                event.prevent_default()
-                event.stop()
+                self._exit_insert()
+                self._consume(event)
+
+    def _handle_nav(self, event: events.Key) -> bool:
+        """Handle navigation keys. Returns True if handled."""
+        key = event.key
+        if key == "j":
+            self.action_cursor_down()
+        elif key == "k":
+            self.action_cursor_up()
+        elif key == "h":
+            self.action_cursor_left()
+        elif key == "l":
+            self.action_cursor_right()
+        elif key == "w":
+            self.action_cursor_word_right()
+        elif key == "b":
+            self.action_cursor_word_left()
+        elif key == "0" or key == "home":
+            self.action_cursor_line_start()
+        elif key == "dollar" or key == "end":
+            self.action_cursor_line_end()
+        elif key == "g":
+            self.cursor_location = (0, 0)
+        elif key == "G":
+            lines = self.text.split("\n")
+            self.cursor_location = (max(0, len(lines) - 1), 0)
+        elif key == "ctrl+d":
+            for _ in range(15):
+                self.action_cursor_down()
+        elif key == "ctrl+u":
+            for _ in range(15):
+                self.action_cursor_up()
+        else:
+            return False
+        self._consume(event)
+        return True
 
     def save(self) -> bool:
         """Write buffer to disk. Returns True on success."""
