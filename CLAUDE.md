@@ -36,6 +36,7 @@ reeree/
 ├── message_bus.py     # Inter-daemon communication (DaemonMessage, MessageBus)
 ├── router.py          # Model routing — reasoning/coding/fast tiers
 ├── session.py         # Session state serialization (Plan + Registry → JSON)
+├── task_discovery.py  # Queued task file parser + discovery + plan conversion
 └── tui/
     ├── app.py         # Main Textual application (vim modal, all commands)
     ├── daemon_tree.py # Hierarchical daemon display widget
@@ -131,7 +132,7 @@ reeree --project sandbox "add error handling to the scraper"
 - **~3-5K lines total.** Not a framework. If it's getting bigger, something is wrong.
 - **YAML is the canonical plan format.** Plan files save as YAML on disk. Daemon communication uses YAML. Display is markdown-like but storage is YAML. No JSON schemas, no custom DSLs.
 - **Commit early, commit often.** One logical change per commit.
-- **Tests document behavior.** 408 passing, 19 xfailed (planned features).
+- **Tests document behavior.** 447 passing, 19 xfailed (planned features).
 - **Values trace to code.** Every ADR has a "Values served" field. See [docs/strategic/decisions/](docs/strategic/decisions/).
 - **Voice spec in voice.py.** All daemon system prompts import `VOICE` from `voice.py` (STE-derived clear prose rules). See [ADR-014](docs/strategic/decisions/ADR-014-simplified-technical-english.md).
 
@@ -146,8 +147,8 @@ How the primary user's Claude Code patterns map to reeree:
 | Git discipline (commit/push per step) | **Good** | Step commits tracked; needs auto-push |
 | Default doc discovery | **Good** | PROJECT_PLAN > PLAN > README |
 | Multi-turn chat | **Partial** | Chat panel works; no cross-session persistence |
-| Cross-reference context | **Partial** | Reads CLAUDE.md; no link-following |
-| Queued task system | **Partial** | Plan steps exist; no task portfolio/discovery |
+| Cross-reference context | **Good** | Follows markdown links one level deep in context assembly |
+| Queued task system | **Good** | `:tasks` discovers, `:load-task N` imports as plan steps |
 | Session coordination | **None** | No SESSION_*.md awareness |
 | File locking / conflict detection | **None** | No multi-session safety |
 | Autonomous scheduled daemons | **None** | User-driven only (`:go`) |
@@ -157,13 +158,9 @@ How the primary user's Claude Code patterns map to reeree:
 
 **Session coordination** — The vorkosigan pattern creates `coordination/SESSION_*.md` before work, checks for conflicts, marks COMPLETE on exit. reeree doesn't participate in this protocol yet.
 
-**Queued tasks** — Large tasks get filed as self-contained starter packs at `coordination/queued/`. reeree can't discover or import these yet.
-
-**Cross-referencing** — Documents link to each other (`## Related People`, `## Related Ideas`). reeree's context assembly doesn't follow these links.
-
 ### What works today
 
-Launch reeree in any repo with Claude Code installed. Write a plan (YAML steps with annotations). `:go` dispatches Claude Code daemons that execute steps with full permissions. Results commit to git. Open any markdown file, add `[machine: ...]` annotations, `:w` to dispatch. Chat with the executor daemon via `:chat`. Switch models with `:set claude-model opus`.
+Launch reeree in any repo with Claude Code installed. Write a plan (YAML steps with annotations). `:go` dispatches Claude Code daemons that execute steps with full permissions. Results commit to git. Open any markdown file, add `[machine: ...]` annotations, `:w` to dispatch. Chat with the executor daemon via `:chat`. Switch models with `:set claude-model opus`. `:tasks` discovers queued task files, `:load-task N` imports them as plan steps. Context assembly follows markdown cross-reference links one level deep.
 
 ## Test Droplet
 
