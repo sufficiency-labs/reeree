@@ -109,6 +109,7 @@ class TestRouteModel:
 class TestConfigExtensions:
     def test_is_first_run_no_key(self):
         config = Config.__new__(Config)  # skip __post_init__ auto-loading
+        config.backend = "together"
         config.api_key = ""
         config.models = {}
         assert config.is_first_run()

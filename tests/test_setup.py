@@ -9,6 +9,7 @@ from reeree.tui.setup_screen import _probe_provider
 class TestFirstRunDetection:
     def test_first_run_no_key_no_models(self):
         config = Config.__new__(Config)
+        config.backend = "together"
         config.api_key = ""
         config.models = {}
         assert config.is_first_run()
@@ -19,6 +20,7 @@ class TestFirstRunDetection:
 
     def test_not_first_run_with_models(self):
         config = Config.__new__(Config)
+        config.backend = "together"
         config.api_key = ""
         config.models = {"fast": {"model": "x"}}
         assert not config.is_first_run()
