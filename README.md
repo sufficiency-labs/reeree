@@ -347,4 +347,4 @@ Active development. 377 tests passing. Core dispatch loop, multi-turn daemons, d
 
 ## License
 
-TBD
+[Anti-Fascist MIT License](LICENSE)
