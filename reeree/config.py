@@ -21,13 +21,10 @@ def _load_api_key() -> str:
 class Config:
     """Runtime configuration."""
 
-    # LLM settings
+    # LLM settings — defaults to best available on Together.ai
     api_base: str = "https://api.together.xyz/v1"
-    model: str = "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
+    model: str = "deepseek-ai/DeepSeek-V3.1"
     api_key: str = ""
-
-    # Default multi-model routing (Together.ai)
-    # Override by setting models + routing in .reeree/config.json
 
     # Autonomy level: low = approve everything, medium = auto-approve reads,
     # high = auto-approve reads+writes, full = auto-approve all
