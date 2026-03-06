@@ -8,7 +8,7 @@ from .config import Config
 from .context import find_relevant_files
 from .voice import VOICE
 
-PLANNER_SYSTEM = f"""{VOICE}
+PLANNER_SYSTEM = VOICE + """
 
 Task decomposition. Given intent and project context, produce concrete atomic steps.
 

@@ -27,8 +27,9 @@ reeree/
 ├── daemon_registry.py # Daemon lifecycle — DaemonRegistry, DaemonKind, DaemonStatus
 ├── executor.py        # File edits, shell commands, git ops, safety classification
 ├── llm.py             # LLM API — OpenAI-compatible httpx calls
-├── plan.py            # Plan/Step data model + markdown serialization
+├── plan.py            # Plan/Step data model + YAML serialization
 ├── planner.py         # Intent → step list decomposition
+├── voice.py           # Voice specification (STE-derived clear prose rules)
 ├── plugin.py          # Plugin base class + entry point discovery
 ├── message_bus.py     # Inter-daemon communication (DaemonMessage, MessageBus)
 ├── router.py          # Model routing — reasoning/coding/fast tiers
@@ -76,10 +77,11 @@ reeree --project sandbox "add error handling to the scraper"
 ## Conventions
 
 - **~3-5K lines total.** Not a framework. If it's getting bigger, something is wrong.
-- **Markdown and YAML are the lingfranks.** Plan files are markdown. Daemon communication uses YAML. No JSON schemas, no custom DSLs.
+- **YAML is the canonical plan format.** Plan files save as YAML on disk. Daemon communication uses YAML. Display is markdown-like but storage is YAML. No JSON schemas, no custom DSLs.
 - **Commit early, commit often.** One logical change per commit.
-- **Tests document behavior.** 230+ passing, 19 xfailed (planned features).
+- **Tests document behavior.** 377 passing, 19 xfailed (planned features).
 - **Values trace to code.** Every ADR has a "Values served" field. See [docs/strategic/decisions/](docs/strategic/decisions/).
+- **Voice spec in voice.py.** All daemon system prompts import `VOICE` from `voice.py` (STE-derived clear prose rules). See [ADR-014](docs/strategic/decisions/ADR-014-simplified-technical-english.md).
 
 ## Test Droplet
 

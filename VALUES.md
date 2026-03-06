@@ -59,7 +59,7 @@ Power users already have the right workflow: tmux for persistence, vim for editi
 **Test question:** Does any text in the UI imply the tool thinks, feels, or wants?
 **In practice:** The tool can have a distinctive style in how it reports status and surfaces information. "Routed to Qwen3-Coder for this step" is fine (reporting action). "I think Qwen3-Coder would be better for this" is not (implying cognition). The line is: describing what happened vs. implying internal experience.
 **Rules out:** Implying cognition ("I think..."), simulating emotions ("I'm excited to..."), claiming preferences ("I'd suggest..."), pretending to have experiences. First person for action reporting is acceptable; first person for simulated inner life is not.
-**Implementation:** System prompts in [app.py](reeree/tui/app.py) — executor daemons are told they are daemons, not chatbots.
+**Implementation:** Voice specification in [voice.py](reeree/voice.py) — STE-derived clear prose rules prepended to all daemon system prompts. See [ADR-014](docs/strategic/decisions/ADR-014-simplified-technical-english.md).
 
 ### 8. Look Before You Ask
 **Principle:** Exhaust existing context before requesting new input from the user.

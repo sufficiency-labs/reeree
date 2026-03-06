@@ -70,6 +70,7 @@ docs/
 │   ├── ADR-013-pluggable-execution-backends.md
 │   └── ADR-014-simplified-technical-english.md
 │
+├── keyboard-shortcuts.md              # Complete keybinding reference
 ├── claude-code-gap-analysis.md        # Usage pattern analysis
 └── GASTOWN_COMPARISON.md              # Comparative analysis
 ```
@@ -108,6 +109,7 @@ docs/
 | "What's next?" | [PROJECT_PLAN.md](../PROJECT_PLAN.md) — roadmap |
 | "Can we afford this?" | [COST.md](../COST.md) — sustainability check |
 | "How does reeree compare?" | [GASTOWN_COMPARISON.md](GASTOWN_COMPARISON.md) — vs Gastown |
+| "What are the keybindings?" | [keyboard-shortcuts.md](keyboard-shortcuts.md) — complete reference |
 
 ---
 

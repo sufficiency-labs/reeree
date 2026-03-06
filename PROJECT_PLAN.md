@@ -1,7 +1,7 @@
 # Project Plan
 
 ## Current State
-Phase 1 complete. Phase 3 complete. Phase 8 infrastructure complete. Session serialization (Phase 2) done. Socket daemon (Phase 2) not started. File viewer, chat-based setup, log tightening all working. 263 tests passing.
+Phase 1 complete. Phase 3 complete. Phase 8 infrastructure complete. Session serialization (Phase 2) done. Socket daemon (Phase 2) not started. File viewer, chat-based setup, log tightening, voice spec, YAML plan format all working. 377 tests passing.
 
 ---
 
@@ -70,16 +70,20 @@ Phase 1 complete. Phase 3 complete. Phase 8 infrastructure complete. Session ser
 
 ---
 
-## Phase 4: Vim Keybindings — 40% Complete
+## Phase 4: Vim Keybindings — 70% Complete
 **Goal:** Full modal interface — normal, insert, command modes.
 **Values tested:** [Vim Is the Lingua Franca](VALUES.md#5-vim-is-the-lingua-franca)
 
 ### What works
-- [x] Normal mode: hjkl navigation, g/G for top/bottom
-- [x] Insert mode: i/a/o enter, Escape exits
-- [x] Command mode: `:` enters, all commands work
-- [x] Mode indicator in status bar
+- [x] Normal mode: hjkl navigation, g/G for start/end of line
+- [x] Insert mode: i/a/o enter, Escape exits (parses YAML back into plan)
+- [x] Command mode: `:` enters, Enter/Escape/Up/Down all work
+- [x] Mode indicator in status bar (green/yellow/cyan)
 - [x] File viewer: full vim modal (NORMAL/INSERT with hjkl)
+- [x] Tab / Ctrl+W pane cycling (plan → exec log → chat → plan)
+- [x] Command history (up to 100 entries)
+- [x] All keyboard shortcuts documented ([docs/keyboard-shortcuts.md](docs/keyboard-shortcuts.md))
+- [x] 74 dedicated workflow + keyboard tests
 
 ### What doesn't
 - [ ] Vim motions: d, y, p, visual mode
@@ -156,8 +160,9 @@ Phase 1 complete. Phase 3 complete. Phase 8 infrastructure complete. Session ser
 | `:cohere files` | DONE | Coherence check |
 | `:propagate` | DONE | Crawl cross-refs |
 | `:setup` | DONE | Chat-based config |
-| `:diff [N]` | STUB | Show step diff |
-| `:log [N]` | STUB | Show daemon log |
+| `:diff [N]` | DONE | Show step diff |
+| `:log [N]` | DONE | Show daemon log |
+| `:undo` | DONE | Revert last step |
 | `:q` / `:q!` / `:wq` | DONE | Quit |
 | `:help` | DONE | Help |
 

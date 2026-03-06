@@ -223,7 +223,8 @@ reeree/
 ├── docs/                  # VDSE documentation hub
 │   ├── README.md          # Navigation hub
 │   ├── GASTOWN_COMPARISON.md
-│   └── strategic/decisions/  # 10 standalone ADRs
+│   ├── keyboard-shortcuts.md # Complete keybinding reference
+│   └── strategic/decisions/  # 14 standalone ADRs
 ├── reeree/                # Python package (~4,000 lines)
 │   ├── cli.py             # Entry point — start/attach/ls/kill sessions
 │   ├── config.py          # Configuration (single model + multi-model routing)
@@ -233,8 +234,9 @@ reeree/
 │   ├── executor.py        # File edits, shell commands, git ops, safety
 │   ├── llm.py             # LLM API interface (OpenAI-compatible, model overrides)
 │   ├── message_bus.py     # Inter-daemon communication (typed messages)
-│   ├── plan.py            # Plan/Step data model + markdown serialization
+│   ├── plan.py            # Plan/Step data model + YAML serialization
 │   ├── planner.py         # Intent → step list decomposition
+│   ├── voice.py           # Voice specification (STE-derived clear prose rules)
 │   ├── plugin.py          # Plugin base class + entry point discovery
 │   ├── router.py          # Model routing (reasoning/coding/fast tiers)
 │   ├── session.py         # Session state serialization
@@ -242,7 +244,7 @@ reeree/
 │       ├── app.py         # Main Textual application (vim modal, commands)
 │       ├── daemon_tree.py # Hierarchical daemon display widget
 │       └── setup_screen.py # First-run setup wizard ("character creation")
-├── tests/                 # Test suite (230+ passing, 19 xfailed)
+├── tests/                 # Test suite (377 passing, 19 xfailed)
 ├── sandbox/               # Test project for development
 └── .gitignore
 ```
@@ -330,14 +332,14 @@ Built with [Values-Driven Systems Engineering](https://github.com/robbymeals/val
 
 ## Status
 
-Active development. 230 tests passing. Core dispatch loop, multi-turn daemons, daemon hierarchy, model routing, setup wizard, and TUI all working. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
+Active development. 377 tests passing. Core dispatch loop, multi-turn daemons, daemon hierarchy, model routing, setup wizard, and TUI all working. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
 
 ---
 
 > **Core Planning Documents:**
 > - [VALUES.md](VALUES.md) — Why we build this way
 > - [IMPLEMENTATION.md](IMPLEMENTATION.md) — How values trace to code decisions
-> - [PROJECT_PLAN.md](PROJECT_PLAN.md) — What's next (7-phase roadmap)
+> - [PROJECT_PLAN.md](PROJECT_PLAN.md) — What's next (8-phase roadmap)
 > - [POC_PLAN.md](POC_PLAN.md) — The 3-week proof of concept
 > - [COST.md](COST.md) — What it costs ($0 local, $5-15 cloud)
 > - [REVENUE.md](REVENUE.md) — How it might sustain itself

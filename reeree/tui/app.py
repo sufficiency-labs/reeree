@@ -1617,13 +1617,21 @@ class ReereeApp(App):
         if not full_path.exists():
             self.notify(f"File not found: {path}", severity="error")
             return
+        if full_path.is_dir():
+            self.notify(f"Not a file: {path}", severity="error")
+            return
 
         self._file_viewer_path = full_path
 
         # Load content into existing file viewer
         viewer = self.query_one("#file-viewer", FileViewer)
         viewer._file_path = full_path
-        content = full_path.read_text() if full_path.exists() else ""
+        try:
+            content = full_path.read_text()
+        except (UnicodeDecodeError, ValueError):
+            self.notify(f"Cannot read binary file: {path}", severity="error")
+            self._file_viewer_path = None
+            return
         viewer.load_file(content)
         viewer.vim_mode = "NORMAL"
         viewer.read_only = True

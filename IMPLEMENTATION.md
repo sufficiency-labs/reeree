@@ -51,13 +51,13 @@ All ADRs are standalone files in [`docs/strategic/decisions/`](docs/strategic/de
 | [ADR-013](docs/strategic/decisions/ADR-013-pluggable-execution-backends.md) | Pluggable execution backends | Proposed | Sufficiency, No Lock-in |
 | [ADR-014](docs/strategic/decisions/ADR-014-simplified-technical-english.md) | Clear Technical English voice spec | Proposed | No Anthropomorphism, Sufficiency |
 
-## Current State (as of 2026-03-05)
+## Current State (as of 2026-03-06)
 
 ### What's Built
 
 | Component | Module | Status |
 |-----------|--------|--------|
-| Plan parser/writer | `plan.py` | Complete — markdown + rich display round-trip |
+| Plan parser/writer | `plan.py` | Complete — YAML canonical format + markdown display round-trip |
 | LLM API interface | `llm.py` | Complete — OpenAI-compatible, model overrides |
 | Context builder | `context.py` | Complete — focused per-step, scope inheritance |
 | Executor (file/shell/git) | `executor.py` | Complete — safety classification, autonomy levels |
@@ -83,7 +83,7 @@ All ADRs are standalone files in [`docs/strategic/decisions/`](docs/strategic/de
 | Crash recovery | ADR-001 | Phase 2 |
 | Parallel daemon dispatch | — | Phase 5 |
 | File conflict detection | — | Phase 5 |
-| Full vim hjkl navigation | — | Phase 4 |
+| Vim motions (d, y, p, visual mode) | — | Phase 4 |
 | Plugin ecosystem | ADR-009 | Phase 8 |
 
 ### Recent Changes
@@ -95,6 +95,10 @@ All ADRs are standalone files in [`docs/strategic/decisions/`](docs/strategic/de
 - **Pause/resume/kill** (b38bbc6) — gap closure on daemon lifecycle commands
 - **Commit bug fix** (62a6fe7) — failed git commit incorrectly returned `status: done`
 - **Gastown comparison** (1546068) — philosophy, architecture, strategic takeaways
+- **YAML plan format** — canonical plan storage switched from markdown to YAML
+- **Voice specification** — STE-derived clear prose rules in `voice.py`, wired into all daemon system prompts
+- **Workflow tests** — 74 comprehensive workflow/keyboard tests in `test_workflows.py`
+- **Keyboard shortcut docs** — complete reference at `docs/keyboard-shortcuts.md`
 
 ## Technology Stack
 
