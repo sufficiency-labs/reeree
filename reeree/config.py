@@ -18,9 +18,14 @@ def _load_api_key() -> str:
 
 
 def _default_backend() -> str:
-    """Pick default backend: claude-code if available, else together."""
+    """Pick default backend: claude-code if installed, else together.
+
+    Claude Code manages its own auth (OAuth or stored API key) —
+    no ANTHROPIC_API_KEY env var needed. If it's not authed, the
+    error bubbles up in the log when a daemon runs.
+    """
     import shutil
-    if shutil.which("claude") and os.environ.get("ANTHROPIC_API_KEY"):
+    if shutil.which("claude"):
         return "claude-code"
     return "together"
 
@@ -64,7 +69,7 @@ class Config:
         """True if no usable backend configured."""
         if self.backend == "claude-code":
             import shutil
-            return not (shutil.which("claude") and os.environ.get("ANTHROPIC_API_KEY"))
+            return not shutil.which("claude")
         return not self.api_key and not self.models
 
     def __post_init__(self):

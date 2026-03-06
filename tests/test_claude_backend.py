@@ -165,9 +165,13 @@ class TestChatClaude:
 
 class TestConfigBackend:
     def test_default_backend(self):
-        """Default backend is together."""
+        """Default backend: claude-code if claude on PATH, else together."""
+        import shutil
         c = Config()
-        assert c.backend == "together"
+        if shutil.which("claude"):
+            assert c.backend == "claude-code"
+        else:
+            assert c.backend == "together"
 
     def test_claude_code_backend(self):
         """Backend can be set to claude-code."""
