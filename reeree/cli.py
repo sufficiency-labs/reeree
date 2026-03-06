@@ -9,7 +9,25 @@ from .plan import Plan
 from .planner import create_plan
 
 
-@click.group(invoke_without_command=True)
+EXAMPLES = """
+Examples:
+
+  reeree                        Open default plan (or create)
+  reeree essay.md               Open any markdown file
+  reeree plan.yaml              Open a plan file
+  reeree "fix the auth bug"     Create a plan from intent
+"""
+
+
+class _ReereeCommand(click.Command):
+    """Preserve epilog formatting."""
+
+    def format_epilog(self, ctx, formatter):
+        if self.epilog:
+            formatter.write(self.epilog)
+
+
+@click.command(cls=_ReereeCommand, epilog=EXAMPLES)
 @click.argument("target", nargs=-1, required=False)
 @click.option("--model", help="Model to use (e.g. deepseek-coder-v2:latest)")
 @click.option("--api-base", help="API base URL")
@@ -17,24 +35,12 @@ from .planner import create_plan
 @click.option("--autonomy", type=click.Choice(["low", "medium", "high", "full"]), default="medium")
 @click.option("--project", type=click.Path(exists=True), default=".", help="Project directory")
 @click.option("--setup", is_flag=True, help="Launch setup wizard")
-@click.pass_context
-def main(ctx, target, model, api_base, api_key, autonomy, project, setup):
-    """reeree — a text editor where machines work inside your document.
+def main(target, model, api_base, api_key, autonomy, project, setup):
+    """A text editor where machines work inside your document.
 
-    Open a document. Edit it. Drop in [machine: ...] annotations. Save.
-    Daemons execute. Results appear. The document evolves.
-
-    Examples:
-        reeree                          # open default plan (or create)
-        reeree essay.md                 # open any markdown file
-        reeree plan.yaml                # open a plan file
-        reeree IMPLEMENTATION_PLAN.md   # open a project doc
-        reeree "fix the auth bug"       # create a plan from intent
-        reeree ls                       # list sessions
+    Open a file. Drop in [machine: ...] annotations. Save.
+    Daemons execute. Results appear.
     """
-    if ctx.invoked_subcommand is not None:
-        return
-
     project_dir = Path(project).resolve()
 
     # Load config
@@ -117,20 +123,6 @@ def main(ctx, target, model, api_base, api_key, autonomy, project, setup):
         app._launch_file = open_file
 
     app.run()
-
-
-@main.command()
-def ls():
-    """List active sessions."""
-    # TODO: read from daemon socket
-    click.echo("Sessions: (daemon not yet implemented)")
-
-
-@main.command()
-def kill():
-    """Kill the daemon."""
-    # TODO: send kill to daemon
-    click.echo("Kill: (daemon not yet implemented)")
 
 
 if __name__ == "__main__":
