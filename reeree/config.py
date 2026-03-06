@@ -40,6 +40,9 @@ class Config:
     # Context settings
     max_context_tokens: int = 24000  # leave room in 32K window
 
+    # Default document — overrides discovery order (PROJECT_PLAN.md > PLAN.md > README.md)
+    default_doc: str = ""
+
     # Multi-model routing (optional — falls back to single model above)
     # models: {"fast": {"model": "...", "api_base": "...", "api_key": "..."}, ...}
     models: dict = field(default_factory=dict)

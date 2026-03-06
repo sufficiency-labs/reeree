@@ -12,7 +12,7 @@ You're editing a document. Some parts of it are machine-addressable — task ann
 
 The document can be anything. A plan. An essay. A spec. A research brief. Slides. Any human-readable format that can be represented in markdown or YAML.
 
-The **plan** — a YAML checklist of steps for daemons to execute — is the default document when you open reeree on a project. But `:file essay.md` puts you in the same tool with the same capabilities on any document.
+When you run `reeree` with no arguments, it discovers your project's default document: `PROJECT_PLAN.md` first, then `PLAN.md`, then `README.md`. The `.reeree/plan.yaml` execution queue loads in the background regardless. Override with `"default_doc"` in `.reeree/config.json`.
 
 Not a chatbot. Not an IDE. A text editor with daemons.
 
@@ -204,6 +204,23 @@ reeree/
     ├── daemon_tree.py  # Daemon display widget
     └── setup_screen.py # Setup wizard
 ```
+
+## .reeree/ directory
+
+Each project gets a `.reeree/` directory (auto-created on first run, or `reeree init`):
+
+```
+.reeree/
+├── config.json     # Committed — project settings (model, API, routing)
+├── plan.yaml       # Committed — shared work queue (current steps)
+├── .gitignore      # Committed — ignores ephemeral files below
+├── session.json    # Gitignored — per-session daemon state
+├── session.log     # Gitignored — per-session event log
+└── local/          # Gitignored — per-user scratch
+    └── plan.yaml   # Per-user local plan (not shared)
+```
+
+`PROJECT_PLAN.md` is the strategic abstraction (phases, deliverables, values). `.reeree/plan.yaml` is the tactical execution queue (steps, annotations, daemon dispatch). Two views of the same work — one for humans reading the project, one for machines executing it.
 
 ## Development
 

@@ -259,6 +259,87 @@ class PlanEditor(TextArea):
             # 'd' starts a pending delete — next 'd' deletes line
             self._pending_d = True
             self._consume(event)
+        elif event.key == "D":
+            # Delete from cursor to end of line
+            self.read_only = False
+            row, col = self.cursor_location
+            lines = self.text.split("\n")
+            if row < len(lines):
+                deleted = lines[row][col:]
+                lines[row] = lines[row][:col]
+                self.text = "\n".join(lines)
+                self.cursor_location = (row, max(0, col - 1))
+                self._yank_register = deleted
+            self.read_only = True
+            self._consume(event)
+        elif event.key == "y":
+            # 'y' starts pending yank — next 'y' yanks line
+            self._pending_y = True
+            self._consume(event)
+        elif event.key == "p":
+            # Paste after cursor/below current line
+            reg = getattr(self, "_yank_register", "")
+            if reg:
+                self.read_only = False
+                if reg.endswith("\n") or "\n" in reg:
+                    # Line-wise paste: insert below current line
+                    row, col = self.cursor_location
+                    lines = self.text.split("\n")
+                    paste = reg.rstrip("\n")
+                    lines.insert(row + 1, paste)
+                    self.text = "\n".join(lines)
+                    self.cursor_location = (row + 1, 0)
+                else:
+                    self.action_cursor_right()
+                    self.insert(reg)
+                self.read_only = True
+            self._consume(event)
+        elif event.key == "P":
+            # Paste before cursor/above current line
+            reg = getattr(self, "_yank_register", "")
+            if reg:
+                self.read_only = False
+                if reg.endswith("\n") or "\n" in reg:
+                    row, col = self.cursor_location
+                    lines = self.text.split("\n")
+                    paste = reg.rstrip("\n")
+                    lines.insert(row, paste)
+                    self.text = "\n".join(lines)
+                    self.cursor_location = (row, 0)
+                else:
+                    self.insert(reg)
+                self.read_only = True
+            self._consume(event)
+        elif event.key == "c":
+            # 'c' starts pending change — next 'c' changes whole line
+            self._pending_c = True
+            self._consume(event)
+        elif event.key == "C":
+            # Change from cursor to end of line
+            row, col = self.cursor_location
+            lines = self.text.split("\n")
+            if row < len(lines):
+                self._yank_register = lines[row][col:]
+                self.read_only = False
+                lines[row] = lines[row][:col]
+                self.text = "\n".join(lines)
+                self.cursor_location = (row, col)
+                self.read_only = True
+            self._enter_insert_mode()
+            self._consume(event)
+        elif event.key == "J":
+            # Join current line with next
+            self.read_only = False
+            row, col = self.cursor_location
+            lines = self.text.split("\n")
+            if row < len(lines) - 1:
+                join_col = len(lines[row])
+                lines[row] = lines[row] + " " + lines[row + 1].lstrip()
+                del lines[row + 1]
+                self.text = "\n".join(lines)
+                self.cursor_location = (row, join_col)
+            self.read_only = True
+            self._consume(event)
         # --- Undo/redo ---
         elif event.key == "u":
             self.read_only = False
@@ -290,18 +371,16 @@ class PlanEditor(TextArea):
 
         Returns True if the key was handled.
         """
-        # Check pending 'd' for 'dd' (delete line)
+        # Check pending multi-key commands (dd, yy, cc)
         if getattr(self, "_pending_d", False) and self.vim_mode == "NORMAL":
             self._pending_d = False
             if event.key == "d":
-                # dd — delete current line
+                # dd — delete current line (yank + delete)
                 self.read_only = False
-                self.action_cursor_line_start()
-                self.action_cursor_line_end()
-                # Select and delete the line
                 row, col = self.cursor_location
                 lines = self.text.split("\n")
                 if row < len(lines):
+                    self._yank_register = lines[row] + "\n"
                     del lines[row]
                     self.text = "\n".join(lines)
                     if row >= len(lines) and row > 0:
@@ -312,6 +391,34 @@ class PlanEditor(TextArea):
                 self._consume(event)
                 return True
             # If not 'd', clear pending and fall through
+
+        if getattr(self, "_pending_y", False) and self.vim_mode == "NORMAL":
+            self._pending_y = False
+            if event.key == "y":
+                # yy — yank current line
+                row, col = self.cursor_location
+                lines = self.text.split("\n")
+                if row < len(lines):
+                    self._yank_register = lines[row] + "\n"
+                self._consume(event)
+                return True
+
+        if getattr(self, "_pending_c", False) and self.vim_mode == "NORMAL":
+            self._pending_c = False
+            if event.key == "c":
+                # cc — change whole line (yank + clear + insert)
+                row, col = self.cursor_location
+                lines = self.text.split("\n")
+                if row < len(lines):
+                    self._yank_register = lines[row] + "\n"
+                    self.read_only = False
+                    lines[row] = ""
+                    self.text = "\n".join(lines)
+                    self.cursor_location = (row, 0)
+                    self.read_only = True
+                self._enter_insert_mode()
+                self._consume(event)
+                return True
 
         key = event.key
         if key == "j":
@@ -492,6 +599,82 @@ class FileViewer(TextArea):
                 self.action_delete_right()
                 self.read_only = True
                 self._consume(event)
+            elif event.key == "d":
+                self._pending_d = True
+                self._consume(event)
+            elif event.key == "D":
+                self.read_only = False
+                row, col = self.cursor_location
+                lines = self.text.split("\n")
+                if row < len(lines):
+                    deleted = lines[row][col:]
+                    lines[row] = lines[row][:col]
+                    self.text = "\n".join(lines)
+                    self.cursor_location = (row, max(0, col - 1))
+                    self._yank_register = deleted
+                self.read_only = True
+                self._consume(event)
+            elif event.key == "y":
+                self._pending_y = True
+                self._consume(event)
+            elif event.key == "p":
+                reg = getattr(self, "_yank_register", "")
+                if reg:
+                    self.read_only = False
+                    if reg.endswith("\n") or "\n" in reg:
+                        row, col = self.cursor_location
+                        lines = self.text.split("\n")
+                        paste = reg.rstrip("\n")
+                        lines.insert(row + 1, paste)
+                        self.text = "\n".join(lines)
+                        self.cursor_location = (row + 1, 0)
+                    else:
+                        self.action_cursor_right()
+                        self.insert(reg)
+                    self.read_only = True
+                self._consume(event)
+            elif event.key == "P":
+                reg = getattr(self, "_yank_register", "")
+                if reg:
+                    self.read_only = False
+                    if reg.endswith("\n") or "\n" in reg:
+                        row, col = self.cursor_location
+                        lines = self.text.split("\n")
+                        paste = reg.rstrip("\n")
+                        lines.insert(row, paste)
+                        self.text = "\n".join(lines)
+                        self.cursor_location = (row, 0)
+                    else:
+                        self.insert(reg)
+                    self.read_only = True
+                self._consume(event)
+            elif event.key == "c":
+                self._pending_c = True
+                self._consume(event)
+            elif event.key == "C":
+                row, col = self.cursor_location
+                lines = self.text.split("\n")
+                if row < len(lines):
+                    self._yank_register = lines[row][col:]
+                    self.read_only = False
+                    lines[row] = lines[row][:col]
+                    self.text = "\n".join(lines)
+                    self.cursor_location = (row, col)
+                    self.read_only = True
+                self._enter_insert()
+                self._consume(event)
+            elif event.key == "J":
+                self.read_only = False
+                row, col = self.cursor_location
+                lines = self.text.split("\n")
+                if row < len(lines) - 1:
+                    join_col = len(lines[row])
+                    lines[row] = lines[row] + " " + lines[row + 1].lstrip()
+                    del lines[row + 1]
+                    self.text = "\n".join(lines)
+                    self.cursor_location = (row, join_col)
+                self.read_only = True
+                self._consume(event)
             elif event.key == "u":
                 self.read_only = False
                 self.action_undo()
@@ -519,6 +702,54 @@ class FileViewer(TextArea):
 
     def _handle_nav(self, event: events.Key) -> bool:
         """Handle navigation keys. Returns True if handled."""
+        # Check pending multi-key commands (dd, yy, cc)
+        if getattr(self, "_pending_d", False) and self.vim_mode == "NORMAL":
+            self._pending_d = False
+            if event.key == "d":
+                # dd — delete current line (yank + delete)
+                self.read_only = False
+                row, col = self.cursor_location
+                lines = self.text.split("\n")
+                if row < len(lines):
+                    self._yank_register = lines[row] + "\n"
+                    del lines[row]
+                    self.text = "\n".join(lines)
+                    if row >= len(lines) and row > 0:
+                        self.cursor_location = (row - 1, 0)
+                    else:
+                        self.cursor_location = (row, 0)
+                self.read_only = True
+                self._consume(event)
+                return True
+
+        if getattr(self, "_pending_y", False) and self.vim_mode == "NORMAL":
+            self._pending_y = False
+            if event.key == "y":
+                # yy — yank current line
+                row, col = self.cursor_location
+                lines = self.text.split("\n")
+                if row < len(lines):
+                    self._yank_register = lines[row] + "\n"
+                self._consume(event)
+                return True
+
+        if getattr(self, "_pending_c", False) and self.vim_mode == "NORMAL":
+            self._pending_c = False
+            if event.key == "c":
+                # cc — change whole line
+                row, col = self.cursor_location
+                lines = self.text.split("\n")
+                if row < len(lines):
+                    self._yank_register = lines[row] + "\n"
+                    self.read_only = False
+                    lines[row] = ""
+                    self.text = "\n".join(lines)
+                    self.cursor_location = (row, 0)
+                    self.read_only = True
+                self._enter_insert()
+                self._consume(event)
+                return True
+
         key = event.key
         if key == "j":
             self.action_cursor_down()
@@ -1007,9 +1238,15 @@ class ReereeApp(App):
             "  Tab/^W   Cycle pane focus\n"
             "\n"
             "[bold]EDIT MODE[/bold] (via :edit — YAML with full vim)\n"
-            "  i/a/o    Enter INSERT (type text)\n"
-            "  Esc      INSERT→NORMAL (stop typing) or NORMAL→VIEW (exit edit)\n"
-            "  hjkl     Navigate (in NORMAL)\n"
+            "  i/I/a/A  Enter INSERT (before/start/after/end)\n"
+            "  o/O      Open line below/above + INSERT\n"
+            "  Esc      INSERT→NORMAL or NORMAL→VIEW\n"
+            "  hjkl     Navigate  |  w/b  Word forward/back\n"
+            "  dd       Delete line  |  D  Delete to EOL\n"
+            "  yy       Yank line  |  p/P  Paste after/before\n"
+            "  cc       Change line  |  C  Change to EOL\n"
+            "  x        Delete char  |  J  Join lines\n"
+            "  u/Ctrl-r Undo/redo\n"
             "  :w       Save edits, return to VIEW\n"
             "  :q       Discard edits, return to VIEW\n"
             "\n"

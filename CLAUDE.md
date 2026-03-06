@@ -41,6 +41,28 @@ reeree/
     └── setup_screen.py # First-run setup wizard
 ```
 
+## .reeree/ Directory
+
+Each project has a `.reeree/` directory (auto-created on first run or `reeree init`):
+
+- **`config.json`** — committed. Project settings (model, API base, routing, `default_doc`).
+- **`plan.yaml`** — committed. Shared execution queue (steps, annotations).
+- **`.gitignore`** — committed. Ignores `session.json`, `session.log`, `local/`.
+- **`session.json`** — gitignored. Per-session daemon state.
+- **`session.log`** — gitignored. Per-session event log.
+- **`local/`** — gitignored. Per-user scratch space (e.g. `local/plan.yaml`).
+
+### Default Document Discovery
+
+When invoked with no arguments, `cli.py` discovers the default document:
+
+1. `config.default_doc` (if set in `.reeree/config.json`)
+2. `PROJECT_PLAN.md`
+3. `PLAN.md`
+4. `README.md`
+
+The discovered doc opens in the file viewer. `.reeree/plan.yaml` always loads as the execution queue regardless of which document is active. Explicit targets (`reeree essay.md`) override discovery.
+
 ## Key Patterns
 
 ### Machine Tasks
