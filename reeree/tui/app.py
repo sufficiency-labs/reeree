@@ -988,7 +988,7 @@ class ReereeApp(App):
 
         # Get the LLM to respond with its opening question
         import asyncio
-        asyncio.ensure_future(self._setup_respond())
+        asyncio.ensure_future(self._setup_respond("help me configure reeree"))
 
     def _exec_write(self, message: str) -> None:
         """Write to the execution log (right pane) and file log."""
