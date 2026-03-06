@@ -14,6 +14,7 @@ from textual import events, on
 
 from ..config import Config
 from ..daemon_registry import DaemonRegistry, DaemonKind, DaemonStatus
+from ..machine_tasks import find_tasks, mark_in_progress, splice_result, MachineTask
 from ..plan import Plan, StatusOverlay, StepStatusUpdate
 from ..voice import VOICE
 from .daemon_tree import DaemonTreeView
@@ -737,6 +738,7 @@ class ReereeApp(App):
                 return
             elif command == "w" and not args:
                 self._save_file_viewer()
+                self._process_machine_tasks_in_viewer()
                 return
             elif command == "wq":
                 self._save_file_viewer()
@@ -1797,6 +1799,135 @@ class ReereeApp(App):
         else:
             self._exec_write(f"[red]save failed: {viewer.file_path.name}[/red]")
             return False
+
+    def _process_machine_tasks_in_viewer(self) -> None:
+        """Find [machine: ...] annotations in the file viewer and dispatch daemons."""
+        viewer = self.query_one("#file-viewer", FileViewer)
+        tasks = find_tasks(viewer.text)
+        if not tasks:
+            return
+
+        self._exec_write(f"[cyan]{len(tasks)} machine task(s) found[/cyan]")
+
+        # Mark all tasks as in-progress in the document
+        updated_text = mark_in_progress(viewer.text, tasks)
+        viewer.load_file(updated_text)
+        viewer.save()
+
+        # Dispatch each task
+        for task in tasks:
+            self._dispatch_machine_task(task, viewer.file_path)
+
+    def _process_machine_tasks_in_plan(self) -> None:
+        """Find [machine: ...] annotations in plan step annotations and dispatch."""
+        for step in self.plan.steps:
+            for i, ann in enumerate(step.annotations):
+                tasks = find_tasks(ann)
+                if tasks:
+                    for task in tasks:
+                        step.annotations[i] = mark_in_progress(ann, [task])
+                        self._dispatch_machine_task(task, None, step_context=step.description)
+                    self._refresh_plan_display()
+                    self._save_plan()
+
+    def _dispatch_machine_task(self, task: MachineTask, file_path: "Path | None", step_context: str = "") -> None:
+        """Dispatch a daemon to execute an inline machine task."""
+        daemon = self._daemon_registry.spawn(
+            DaemonKind.STEP, f"machine: {task.description[:50]}",
+            scope=str(self.project_dir.name),
+        )
+        task.daemon_id = daemon.id
+        self._exec_write(f"d{daemon.id} → [machine: {task.description[:60]}]")
+
+        import asyncio
+        asyncio.ensure_future(
+            self._run_machine_task(daemon.id, task, file_path, step_context)
+        )
+
+    async def _run_machine_task(self, daemon_id: int, task: MachineTask, file_path: "Path | None", step_context: str = "") -> None:
+        """Execute an inline machine task via LLM and splice the result back."""
+        from ..llm import chat_async
+        from ..context import gather_context
+        from ..plan import Step
+
+        daemon = self._daemon_registry.get(daemon_id)
+
+        try:
+            # Gather context from the project
+            dummy_step = Step(description=task.description)
+            context = gather_context(dummy_step, self.project_dir, self.config.max_context_tokens * 4)
+
+            # Build the document context
+            doc_context = ""
+            if file_path and file_path.exists():
+                doc_text = file_path.read_text()
+                # Show surrounding text for context (up to 2000 chars around the task)
+                doc_context = f"\nDocument ({file_path.name}):\n{doc_text[:4000]}\n"
+
+            system = (
+                f"{VOICE}\n\n"
+                f"Inline machine task. The user is writing a document and has placed an inline\n"
+                f"annotation requesting machine work. Produce ONLY the content that should\n"
+                f"replace the annotation — no preamble, no 'here is...', no wrapping.\n\n"
+                f"If the task asks for a list, produce a markdown list.\n"
+                f"If it asks for prose, produce prose.\n"
+                f"If it asks for research, produce concise findings.\n"
+                f"Match the voice and style of the surrounding document.\n\n"
+                f"Project context:\n{context[:4000]}\n"
+                f"{doc_context}"
+            )
+
+            prompt = task.description
+            if step_context:
+                prompt = f"Context: {step_context}\n\nTask: {task.description}"
+
+            messages = [{"role": "user", "content": prompt}]
+            result = await chat_async(messages, self.config, system=system)
+            result = result.strip()
+
+            time_str = daemon.elapsed_str if daemon else "?"
+
+            # Splice result back into the document
+            if file_path and file_path.exists():
+                doc_text = file_path.read_text()
+                updated = splice_result(doc_text, task.description, result)
+                file_path.write_text(updated)
+
+                # Update the file viewer if it's still showing this file
+                if self._file_viewer_path == file_path:
+                    viewer = self.query_one("#file-viewer", FileViewer)
+                    viewer.load_file(updated)
+
+                self._exec_write(
+                    f"[green]done[/green] d{daemon_id} ({time_str}) — spliced into {file_path.name}"
+                )
+            else:
+                # Result goes to exec log if no file to splice into
+                self._exec_write(
+                    f"[green]done[/green] d{daemon_id} ({time_str}):\n{result[:500]}"
+                )
+
+            if daemon:
+                daemon.status = DaemonStatus.DONE
+                daemon.log = result[:1000]
+
+        except Exception as e:
+            self._exec_write(f"[red]fail[/red] d{daemon_id}: {e}")
+            if daemon:
+                daemon.status = DaemonStatus.FAILED
+                daemon.error = str(e)
+
+            # Remove progress indicator on failure
+            if file_path and file_path.exists():
+                doc_text = file_path.read_text()
+                # Restore original annotation
+                updated = splice_result(doc_text, task.description, f"[machine: {task.description}] ← FAILED: {e}")
+                file_path.write_text(updated)
+                if self._file_viewer_path == file_path:
+                    viewer = self.query_one("#file-viewer", FileViewer)
+                    viewer.load_file(updated)
+
+        self._update_status()
 
     def _set_option(self, args: str) -> None:
         parts = args.split(None, 1)
