@@ -21,13 +21,16 @@ def _load_api_key() -> str:
 class Config:
     """Runtime configuration."""
 
-    # LLM settings
+    # Backend: "together" (OpenAI-compatible API) or "claude-code" (subprocess)
+    backend: str = "together"
+
+    # LLM settings (for "together" backend)
     api_base: str = "https://api.together.xyz/v1"
-    model: str = "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
+    model: str = "deepseek-ai/DeepSeek-V3.1"
     api_key: str = ""
 
-    # Default multi-model routing (Together.ai)
-    # Override by setting models + routing in .reeree/config.json
+    # Claude Code settings (for "claude-code" backend)
+    claude_model: str = "sonnet"  # sonnet, opus, haiku
 
     # Autonomy level: low = approve everything, medium = auto-approve reads,
     # high = auto-approve reads+writes, full = auto-approve all
@@ -39,6 +42,9 @@ class Config:
 
     # Context settings
     max_context_tokens: int = 24000  # leave room in 32K window
+
+    # Default document — overrides discovery order (PROJECT_PLAN.md > PLAN.md > README.md)
+    default_doc: str = ""
 
     # Multi-model routing (optional — falls back to single model above)
     # models: {"fast": {"model": "...", "api_base": "...", "api_key": "..."}, ...}

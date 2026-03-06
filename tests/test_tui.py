@@ -1,7 +1,7 @@
 """Simulated TUI tests using Textual's run_test() framework.
 
 Tests the full reeree app in a headless terminal:
-- Vim modal keybindings (VIEW/NORMAL/INSERT/COMMAND)
+- Vim modal keybindings (NORMAL/INSERT/COMMAND)
 - Pane focus cycling (Tab, Ctrl+W)
 - Command mode (:q, :w, :add, :del, :help, :chat, :close)
 - Chat panel toggle and escape
@@ -95,12 +95,12 @@ class TestAppLaunch:
             assert editor.has_focus
 
     @pytest.mark.asyncio
-    async def test_initial_mode_is_view(self, tmp_path):
-        """App starts in VIEW mode."""
+    async def test_initial_mode_is_normal(self, tmp_path):
+        """App starts in NORMAL mode (vim-native, no :edit gate)."""
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
-            assert editor.vim_mode == "VIEW"
+            assert editor.vim_mode == "NORMAL"
             assert editor.read_only is True
 
     @pytest.mark.asyncio
@@ -147,14 +147,10 @@ class TestAppLaunch:
 class TestVimNormalMode:
     @pytest.mark.asyncio
     async def test_i_enters_insert_from_normal(self, tmp_path):
-        """Pressing 'i' in NORMAL mode (after :edit) switches to INSERT."""
+        """Pressing 'i' in NORMAL mode switches to INSERT directly."""
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
-            assert editor.vim_mode == "VIEW"
-            # Enter NORMAL mode via :edit
-            editor.enter_edit_mode()
-            await pilot.pause()
             assert editor.vim_mode == "NORMAL"
             await pilot.press("i")
             assert editor.vim_mode == "INSERT"
@@ -166,8 +162,6 @@ class TestVimNormalMode:
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             await pilot.press("a")
             assert editor.vim_mode == "INSERT"
 
@@ -177,8 +171,6 @@ class TestVimNormalMode:
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             await pilot.press("i")
             assert editor.vim_mode == "INSERT"
             await pilot.press("escape")
@@ -186,27 +178,25 @@ class TestVimNormalMode:
             assert editor.read_only is True
 
     @pytest.mark.asyncio
-    async def test_escape_from_normal_returns_to_view(self, tmp_path):
-        """Pressing Escape in NORMAL mode returns to VIEW."""
+    async def test_escape_in_normal_is_noop(self, tmp_path):
+        """Pressing Escape in NORMAL mode stays in NORMAL (like real vim)."""
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             assert editor.vim_mode == "NORMAL"
             await pilot.press("escape")
-            assert editor.vim_mode == "VIEW"
+            assert editor.vim_mode == "NORMAL"
             assert editor.read_only is True
 
     @pytest.mark.asyncio
-    async def test_hjkl_does_not_leave_view(self, tmp_path):
-        """hjkl navigation keys stay in VIEW mode."""
+    async def test_hjkl_stays_in_normal(self, tmp_path):
+        """hjkl navigation keys stay in NORMAL mode."""
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
             for key in ("j", "k", "h", "l"):
                 await pilot.press(key)
-                assert editor.vim_mode == "VIEW", f"Key {key} changed mode"
+                assert editor.vim_mode == "NORMAL", f"Key {key} changed mode"
 
     @pytest.mark.asyncio
     async def test_j_moves_cursor_down(self, tmp_path):
@@ -234,12 +224,12 @@ class TestVimNormalMode:
             assert row_after <= row_before
 
     @pytest.mark.asyncio
-    async def test_status_bar_shows_view(self, tmp_path):
-        """Status bar displays VIEW mode on startup."""
+    async def test_status_bar_shows_normal(self, tmp_path):
+        """Status bar displays NORMAL mode on startup."""
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
             status = app.query_one("#status-bar", StatusBar)
-            assert status.mode == "VIEW"
+            assert status.mode == "NORMAL"
 
     @pytest.mark.asyncio
     async def test_status_bar_shows_insert(self, tmp_path):
@@ -247,9 +237,6 @@ class TestVimNormalMode:
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
             status = app.query_one("#status-bar", StatusBar)
-            editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             await pilot.press("i")
             assert status.mode == "INSERT"
 
@@ -259,8 +246,6 @@ class TestVimNormalMode:
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             await pilot.press("o")
             assert editor.vim_mode == "INSERT"
 
@@ -277,9 +262,6 @@ class TestVimInsertMode:
         app = _make_app(tmp_path, plan)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
-            # Enter NORMAL then INSERT
-            editor.enter_edit_mode()
-            await pilot.pause()
             original_len = len(editor.text)
             await pilot.press("i")
             # Type some characters
@@ -293,16 +275,14 @@ class TestVimInsertMode:
         app = _make_app(tmp_path)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             await pilot.press("i")
             assert not editor.read_only
             await pilot.press("escape")
             assert editor.read_only
 
     @pytest.mark.asyncio
-    async def test_normal_keys_dont_insert_in_view_mode(self, tmp_path):
-        """hjkl and other keys don't insert text in VIEW mode."""
+    async def test_normal_keys_dont_insert_in_normal_mode(self, tmp_path):
+        """hjkl and other keys don't insert text in NORMAL mode."""
         plan = Plan(intent="test", steps=[Step(description="do thing")])
         app = _make_app(tmp_path, plan)
         async with app.run_test() as pilot:
@@ -337,9 +317,9 @@ class TestCommandMode:
             await pilot.pause(0.1)
             await pilot.press("escape")
             await pilot.pause(0.1)
-            # Should be back to main screen in VIEW mode
+            # Should be back to main screen in NORMAL mode
             status = app.query_one("#status-bar", StatusBar)
-            assert status.mode == "VIEW"
+            assert status.mode == "NORMAL"
 
     @pytest.mark.asyncio
     async def test_command_help(self, tmp_path):
@@ -351,9 +331,9 @@ class TestCommandMode:
             # Type "help" and submit
             await pilot.press("h", "e", "l", "p", "enter")
             await pilot.pause(0.1)
-            # Should not crash, status back to VIEW
+            # Should not crash, status back to NORMAL
             status = app.query_one("#status-bar", StatusBar)
-            assert status.mode == "VIEW"
+            assert status.mode == "NORMAL"
 
     @pytest.mark.asyncio
     async def test_command_w_saves_plan(self, tmp_path):
@@ -767,24 +747,24 @@ class TestPlanEditor:
             assert "Write tests for error cases" in text
 
     @pytest.mark.asyncio
-    async def test_done_steps_show_checkmark(self, tmp_path):
-        """Done steps display ✓ indicator in VIEW (rich display) mode."""
+    async def test_done_steps_show_in_yaml(self, tmp_path):
+        """Done steps show status: done in YAML (NORMAL mode shows YAML)."""
         plan = _make_plan()
         app = _make_app(tmp_path, plan)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
             text = editor.text
-            assert "\u2713" in text  # ✓
+            assert "status: done" in text
 
     @pytest.mark.asyncio
-    async def test_pending_steps_show_empty_checkbox(self, tmp_path):
-        """Pending steps display ○ indicator in VIEW (rich display) mode."""
+    async def test_pending_steps_show_in_yaml(self, tmp_path):
+        """Pending steps show status: pending in YAML."""
         plan = _make_plan()
         app = _make_app(tmp_path, plan)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
             text = editor.text
-            assert "\u25cb" in text  # ○
+            assert "status: pending" in text
 
     @pytest.mark.asyncio
     async def test_get_plan_roundtrips(self, tmp_path):
@@ -798,8 +778,8 @@ class TestPlanEditor:
             assert len(restored.steps) == len(plan.steps)
 
     @pytest.mark.asyncio
-    async def test_refresh_plan_display_updates_view(self, tmp_path):
-        """Refreshing plan display changes the indicator in the editor."""
+    async def test_refresh_plan_display_updates_yaml(self, tmp_path):
+        """Refreshing plan display updates YAML in editor."""
         plan = _make_plan()
         app = _make_app(tmp_path, plan)
         async with app.run_test() as pilot:
@@ -810,8 +790,8 @@ class TestPlanEditor:
             app._refresh_plan_display()
             await pilot.pause()
             text = editor.text
-            # Should now have two ✓ steps (VIEW rich display mode)
-            assert text.count("\u2713") == 2
+            # Should now have two done steps in YAML
+            assert text.count("status: done") == 2
 
     @pytest.mark.asyncio
     async def test_refresh_plan_display_preserves_cursor(self, tmp_path):
@@ -921,9 +901,6 @@ class TestPlanPersistence:
         app = _make_app(tmp_path, plan)
         async with app.run_test() as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
-            # Enter NORMAL via :edit, then INSERT via i
-            editor.enter_edit_mode()
-            await pilot.pause()
             # Directly modify the YAML text to change the intent
             # (typing individual chars into YAML is fragile with cursor position)
             editor.read_only = False

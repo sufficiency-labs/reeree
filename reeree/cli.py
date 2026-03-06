@@ -12,10 +12,20 @@ from .planner import create_plan
 EXAMPLES = """
 Examples:
 
-  reeree                        Open default plan (or create)
+  reeree                        Open default document (or plan)
   reeree essay.md               Open any markdown file
   reeree plan.yaml              Open a plan file
   reeree "fix the auth bug"     Create a plan from intent
+  reeree init                   Initialize .reeree/ directory
+"""
+
+# Discovery order for default document when invoked with no arguments
+DEFAULT_DOCS = ["PROJECT_PLAN.md", "PLAN.md", "README.md"]
+
+REEREE_GITIGNORE = """\
+session.json
+session.log
+local/
 """
 
 
@@ -25,6 +35,49 @@ class _ReereeCommand(click.Command):
     def format_epilog(self, ctx, formatter):
         if self.epilog:
             formatter.write(self.epilog)
+
+
+def init_reeree_dir(project_dir: Path) -> None:
+    """Create .reeree/ directory with config.json and .gitignore."""
+    reeree_dir = project_dir / ".reeree"
+    reeree_dir.mkdir(exist_ok=True)
+
+    # .gitignore — committed, ignores ephemeral files
+    gitignore = reeree_dir / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text(REEREE_GITIGNORE)
+
+    # config.json — committed, project-level settings
+    config_file = reeree_dir / "config.json"
+    if not config_file.exists():
+        Config().save(config_file)
+
+    # plan.yaml — committed, shared work queue (create empty if missing)
+    plan_file = reeree_dir / "plan.yaml"
+    if not plan_file.exists():
+        Plan(intent="", steps=[]).save(plan_file)
+
+    # local/ — gitignored, per-user scratch
+    local_dir = reeree_dir / "local"
+    local_dir.mkdir(exist_ok=True)
+
+
+def _discover_default_doc(project_dir: Path, config: Config) -> Path | None:
+    """Find the default document to open.
+
+    Order: config.default_doc > PROJECT_PLAN.md > PLAN.md > README.md.
+    """
+    if config.default_doc:
+        p = project_dir / config.default_doc
+        if p.exists() and p.is_file():
+            return p.resolve()
+
+    for name in DEFAULT_DOCS:
+        p = project_dir / name
+        if p.exists() and p.is_file():
+            return p.resolve()
+
+    return None
 
 
 @click.command(cls=_ReereeCommand, epilog=EXAMPLES)
@@ -43,6 +96,18 @@ def main(target, model, api_base, api_key, autonomy, project, setup):
     """
     project_dir = Path(project).resolve()
 
+    # Handle "reeree init" — create .reeree/ directory and exit
+    target_str = " ".join(target) if target else ""
+    if target_str == "init":
+        init_reeree_dir(project_dir)
+        click.echo(f"Initialized .reeree/ in {project_dir}")
+        return
+
+    # Auto-init .reeree/ on first run if it doesn't exist
+    reeree_dir = project_dir / ".reeree"
+    if not reeree_dir.exists():
+        init_reeree_dir(project_dir)
+
     # Load config
     config = Config.load(project_dir / ".reeree" / "config.json")
     if model:
@@ -54,7 +119,6 @@ def main(target, model, api_base, api_key, autonomy, project, setup):
     config.autonomy = autonomy
 
     # Determine what to open
-    target_str = " ".join(target) if target else ""
     plan = None
     open_file = None  # file to open in viewer on launch
 
@@ -97,10 +161,23 @@ def main(target, model, api_base, api_key, autonomy, project, setup):
                 click.echo(f"Failed to create plan: {e}", err=True)
                 sys.exit(1)
     else:
-        # No target — open default plan
+        # No target — discover default document, load plan in background
         plan_path = project_dir / ".reeree" / "plan.yaml"
         if plan_path.exists():
-            plan = Plan.load(plan_path)
+            try:
+                plan = Plan.load(plan_path)
+            except Exception:
+                plan = None
+
+        default_doc = _discover_default_doc(project_dir, config)
+        if default_doc:
+            open_file = default_doc
+            if plan and plan.steps:
+                done, total = plan.progress
+                click.echo(f"Opening: {default_doc.name} (plan: {done}/{total} done)")
+            else:
+                click.echo(f"Opening: {default_doc.name}")
+        elif plan and plan.steps:
             done, total = plan.progress
             click.echo(f"Resuming: {plan_path.name} ({done}/{total} done)")
         else:

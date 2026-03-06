@@ -12,7 +12,7 @@ You're editing a document. Some parts of it are machine-addressable — task ann
 
 The document can be anything. A plan. An essay. A spec. A research brief. Slides. Any human-readable format that can be represented in markdown or YAML.
 
-The **plan** — a YAML checklist of steps for daemons to execute — is the default document when you open reeree on a project. But `:file essay.md` puts you in the same tool with the same capabilities on any document.
+When you run `reeree` with no arguments, it discovers your project's default document: `PROJECT_PLAN.md` first, then `PLAN.md`, then `README.md`. The `.reeree/plan.yaml` execution queue loads in the background regardless. Override with `"default_doc"` in `.reeree/config.json`.
 
 Not a chatbot. Not an IDE. A text editor with daemons.
 
@@ -41,7 +41,7 @@ steps:
     files: [scripts/heartbeat.sh, scripts/watchdog.sh]
 ```
 
-Commands: `:edit` to edit the plan, `:w` to save, `:go` to dispatch steps to daemons.
+Commands: `i` to edit, `:w` to save, `:go` to dispatch steps to daemons.
 
 ### Markdown — everything else
 
@@ -76,29 +76,28 @@ Three panes. Document on the left. Log on the right. Chat at the bottom when you
 │                          │ STATUS: done         │
 │                          │                      │
 ├──────────────────────────┴──────────────────────┤
-│ VIEW  :edit=edit  :go=dispatch      2 daemons   │
+│ NORMAL  i=insert  :go=dispatch      2 daemons   │
 └─────────────────────────────────────────────────┘
 ```
 
 ## Vim modes
 
-Three modes in the document, like vim:
+Two modes, like vim:
 
 | Mode | What it is | Status bar |
 |------|-----------|-----------|
-| **VIEW** | Rich display, read-only. Navigate with hjkl. Default. | green |
-| **EDIT** | YAML source, full vim (NORMAL/INSERT within). Via `:edit`. | blue/yellow |
-| **COMMAND** | `:` commands. | cyan |
+| **NORMAL** | YAML source, read-only. hjkl nav. `i`/`a`/`o` to insert. Default. | green |
+| **INSERT** | YAML source, editable. Escape returns to NORMAL. | yellow |
+| **COMMAND** | `:` commands (from NORMAL via `:`). | cyan |
 
-`:edit` enters the YAML editing context with full vim keybindings — `i` to insert, Escape to stop inserting, hjkl to navigate. `:w` saves and returns to VIEW. `:q` discards.
+Opens in NORMAL mode. `i` enters INSERT immediately — no `:edit` gate. `:w` saves the plan. `:q` quits.
 
 ## Commands
 
 ```
 # Editing
-:edit                       enter plan editing mode (YAML, full vim)
-:w                          save document (exit edit mode if editing)
-:q                          quit (or discard edits if editing)
+:w                          save document
+:q                          quit
 
 # Dispatch
 :go                         dispatch next 2 pending steps
@@ -124,7 +123,9 @@ Three modes in the document, like vim:
 :kill N                     kill daemon and children
 
 # Configuration
-:set model <name>           change LLM model
+:set model <name>           change LLM model (together backend)
+:set backend <name>         together|claude-code
+:set claude-model <name>    sonnet|opus|haiku (claude-code backend)
 :set autonomy <level>       low|medium|high|full
 :setup                      re-run setup wizard
 
@@ -164,7 +165,7 @@ This works in any markdown file opened with `:file`. The plan is one kind of mac
 
 **Git is undo.** Every completed step is a git commit. `:undo` reverts. Mistakes cost nothing.
 
-**Any model.** ollama local models by default. Any OpenAI-compatible API. No subscriptions required.
+**Two backends.** Together.ai/OpenAI-compatible API for open models (DeepSeek, Qwen, Llama). Or Claude Code as persistent subprocesses — each daemon is a full Claude session with `--resume` for context persistence. `:set backend claude-code` to switch.
 
 **Vim keybindings.** Your muscle memory works.
 
@@ -187,7 +188,8 @@ reeree/
 ├── cli.py              # Entry point
 ├── config.py           # Configuration
 ├── context.py          # Focused context per step
-├── daemon_executor.py  # Multi-turn step execution
+├── claude_backend.py   # Claude Code subprocess backend (--resume persistence)
+├── daemon_executor.py  # Together.ai/OpenAI multi-turn step execution
 ├── daemon_registry.py  # Daemon lifecycle (hierarchy, pause/kill)
 ├── executor.py         # File edits, shell, git, safety
 ├── llm.py              # LLM API (OpenAI-compatible)
@@ -205,6 +207,23 @@ reeree/
     └── setup_screen.py # Setup wizard
 ```
 
+## .reeree/ directory
+
+Each project gets a `.reeree/` directory (auto-created on first run, or `reeree init`):
+
+```
+.reeree/
+├── config.json     # Committed — project settings (model, API, routing)
+├── plan.yaml       # Committed — shared work queue (current steps)
+├── .gitignore      # Committed — ignores ephemeral files below
+├── session.json    # Gitignored — per-session daemon state
+├── session.log     # Gitignored — per-session event log
+└── local/          # Gitignored — per-user scratch
+    └── plan.yaml   # Per-user local plan (not shared)
+```
+
+`PROJECT_PLAN.md` is the strategic abstraction (phases, deliverables, values). `.reeree/plan.yaml` is the tactical execution queue (steps, annotations, daemon dispatch). Two views of the same work — one for humans reading the project, one for machines executing it.
+
 ## Development
 
 ```bash
@@ -212,14 +231,14 @@ source /mnt/vorkosigan_data_v2/vorkosigan/.venv/bin/activate
 cd /mnt/vorkosigan_data_v2/vorkosigan/private/reeree
 pip install -e .
 
-# Run tests (396 passing, 19 xfailed)
+# Run tests (423 passing, 19 xfailed)
 python -m pytest tests/ -v
 
 # Launch TUI
 reeree --project sandbox "add error handling to the scraper"
 
-# Inside TUI: VIEW mode by default
-#   :edit     → edit plan (YAML, full vim)
+# Inside TUI: NORMAL mode by default
+#   i         → insert mode (edit YAML)
 #   :go       → dispatch daemons
 #   :chat     → talk to executor
 #   :help     → command reference
@@ -227,7 +246,7 @@ reeree --project sandbox "add error handling to the scraper"
 
 ## Status
 
-Active development. 396 tests passing. Core dispatch loop, multi-turn daemons, daemon hierarchy, model routing, inline machine tasks, setup wizard, and TUI all working. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
+Active development. 408 tests passing. Core dispatch loop, multi-turn daemons, daemon hierarchy, model routing, inline machine tasks, Claude Code subprocess backend, setup wizard, and TUI all working. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
 
 ---
 

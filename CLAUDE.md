@@ -21,9 +21,10 @@ All daemon output defaults to ship's-computer tone — direct, informational, co
 ```
 reeree/
 ├── cli.py             # Entry point — Click CLI
-├── config.py          # Configuration — single model + multi-model routing
+├── claude_backend.py  # Claude Code subprocess backend (--resume persistence)
+├── config.py          # Configuration — backend, models, routing
 ├── context.py         # Focused context assembly per step
-├── daemon_executor.py # Multi-turn LLM conversation (read→edit→verify loop)
+├── daemon_executor.py # Together.ai/OpenAI multi-turn LLM conversation
 ├── daemon_registry.py # Daemon lifecycle — DaemonRegistry, DaemonKind, DaemonStatus
 ├── executor.py        # File edits, shell commands, git ops, safety classification
 ├── llm.py             # LLM API — OpenAI-compatible httpx calls
@@ -41,6 +42,42 @@ reeree/
     └── setup_screen.py # First-run setup wizard
 ```
 
+## .reeree/ Directory
+
+Each project has a `.reeree/` directory (auto-created on first run or `reeree init`):
+
+- **`config.json`** — committed. Project settings (model, API base, routing, `default_doc`).
+- **`plan.yaml`** — committed. Shared execution queue (steps, annotations).
+- **`.gitignore`** — committed. Ignores `session.json`, `session.log`, `local/`.
+- **`session.json`** — gitignored. Per-session daemon state.
+- **`session.log`** — gitignored. Per-session event log.
+- **`local/`** — gitignored. Per-user scratch space (e.g. `local/plan.yaml`).
+
+### Default Document Discovery
+
+When invoked with no arguments, `cli.py` discovers the default document:
+
+1. `config.default_doc` (if set in `.reeree/config.json`)
+2. `PROJECT_PLAN.md`
+3. `PLAN.md`
+4. `README.md`
+
+The discovered doc opens in the file viewer. `.reeree/plan.yaml` always loads as the execution queue regardless of which document is active. Explicit targets (`reeree essay.md`) override discovery.
+
+## Backends
+
+Two execution backends, switchable via `config.backend` or `:set backend`:
+
+### Together.ai / OpenAI-compatible (`backend: "together"`)
+Default. Uses `llm.py` + `daemon_executor.py`. The daemon calls an OpenAI-compatible API, gets YAML action responses, and executes them locally via `executor.py`. Multi-turn loop: LLM → parse YAML → execute actions → feed results back.
+
+### Claude Code subprocess (`backend: "claude-code"`)
+Each daemon is a persistent Claude Code session. Spawns `claude -p` with `--output-format json`. Claude Code handles file operations, shell commands, and search natively — no YAML action parsing needed. Sessions persist via `--resume <session_id>`, stored on `Daemon.session_id`.
+
+Config fields: `backend` ("together" | "claude-code"), `claude_model` ("sonnet" | "opus" | "haiku").
+
+Runtime: `:set backend claude-code`, `:set claude-model opus`.
+
 ## Key Patterns
 
 ### Machine Tasks
@@ -52,10 +89,9 @@ The daemon updates the buffer with status while work is in progress. Changes mer
 ### Step IDs
 Stable identifiers (e.g. `add-a1b2`) that survive reordering. Steps can be moved, inserted, or deleted without breaking references.
 
-### Three Modes
-- **VIEW** (default): rich display, read-only, status overlays visible
-- **EDIT**: YAML source, full vim keybindings, `:edit` to enter
-- **INSERT**: typing within edit mode, `i`/`a`/`o` to enter from EDIT
+### Two Modes (vim-native)
+- **NORMAL** (default): YAML source, read-only, full vim navigation. `i`/`a`/`o` to insert.
+- **INSERT**: YAML source, editable. Escape returns to NORMAL.
 
 ### DaemonRegistry (not _daemons dict)
 `app.py` uses `self._daemon_registry` (a `DaemonRegistry` instance). The old `self._daemons` dict pattern is gone. All daemon lifecycle goes through the registry.
@@ -95,7 +131,7 @@ reeree --project sandbox "add error handling to the scraper"
 - **~3-5K lines total.** Not a framework. If it's getting bigger, something is wrong.
 - **YAML is the canonical plan format.** Plan files save as YAML on disk. Daemon communication uses YAML. Display is markdown-like but storage is YAML. No JSON schemas, no custom DSLs.
 - **Commit early, commit often.** One logical change per commit.
-- **Tests document behavior.** 396 passing, 19 xfailed (planned features).
+- **Tests document behavior.** 408 passing, 19 xfailed (planned features).
 - **Values trace to code.** Every ADR has a "Values served" field. See [docs/strategic/decisions/](docs/strategic/decisions/).
 - **Voice spec in voice.py.** All daemon system prompts import `VOICE` from `voice.py` (STE-derived clear prose rules). See [ADR-014](docs/strategic/decisions/ADR-014-simplified-technical-english.md).
 
