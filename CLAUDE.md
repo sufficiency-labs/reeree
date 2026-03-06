@@ -89,10 +89,9 @@ The daemon updates the buffer with status while work is in progress. Changes mer
 ### Step IDs
 Stable identifiers (e.g. `add-a1b2`) that survive reordering. Steps can be moved, inserted, or deleted without breaking references.
 
-### Three Modes
-- **VIEW** (default): rich display, read-only, status overlays visible
-- **EDIT**: YAML source, full vim keybindings, `:edit` to enter
-- **INSERT**: typing within edit mode, `i`/`a`/`o` to enter from EDIT
+### Two Modes (vim-native)
+- **NORMAL** (default): YAML source, read-only, full vim navigation. `i`/`a`/`o` to insert.
+- **INSERT**: YAML source, editable. Escape returns to NORMAL.
 
 ### DaemonRegistry (not _daemons dict)
 `app.py` uses `self._daemon_registry` (a `DaemonRegistry` instance). The old `self._daemons` dict pattern is gone. All daemon lifecycle goes through the registry.
@@ -132,7 +131,7 @@ reeree --project sandbox "add error handling to the scraper"
 - **~3-5K lines total.** Not a framework. If it's getting bigger, something is wrong.
 - **YAML is the canonical plan format.** Plan files save as YAML on disk. Daemon communication uses YAML. Display is markdown-like but storage is YAML. No JSON schemas, no custom DSLs.
 - **Commit early, commit often.** One logical change per commit.
-- **Tests document behavior.** 423 passing, 19 xfailed (planned features).
+- **Tests document behavior.** 408 passing, 19 xfailed (planned features).
 - **Values trace to code.** Every ADR has a "Values served" field. See [docs/strategic/decisions/](docs/strategic/decisions/).
 - **Voice spec in voice.py.** All daemon system prompts import `VOICE` from `voice.py` (STE-derived clear prose rules). See [ADR-014](docs/strategic/decisions/ADR-014-simplified-technical-english.md).
 

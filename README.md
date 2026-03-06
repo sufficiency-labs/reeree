@@ -41,7 +41,7 @@ steps:
     files: [scripts/heartbeat.sh, scripts/watchdog.sh]
 ```
 
-Commands: `:edit` to edit the plan, `:w` to save, `:go` to dispatch steps to daemons.
+Commands: `i` to edit, `:w` to save, `:go` to dispatch steps to daemons.
 
 ### Markdown — everything else
 
@@ -76,29 +76,28 @@ Three panes. Document on the left. Log on the right. Chat at the bottom when you
 │                          │ STATUS: done         │
 │                          │                      │
 ├──────────────────────────┴──────────────────────┤
-│ VIEW  :edit=edit  :go=dispatch      2 daemons   │
+│ NORMAL  i=insert  :go=dispatch      2 daemons   │
 └─────────────────────────────────────────────────┘
 ```
 
 ## Vim modes
 
-Three modes in the document, like vim:
+Two modes, like vim:
 
 | Mode | What it is | Status bar |
 |------|-----------|-----------|
-| **VIEW** | Rich display, read-only. Navigate with hjkl. Default. | green |
-| **EDIT** | YAML source, full vim (NORMAL/INSERT within). Via `:edit`. | blue/yellow |
-| **COMMAND** | `:` commands. | cyan |
+| **NORMAL** | YAML source, read-only. hjkl nav. `i`/`a`/`o` to insert. Default. | green |
+| **INSERT** | YAML source, editable. Escape returns to NORMAL. | yellow |
+| **COMMAND** | `:` commands (from NORMAL via `:`). | cyan |
 
-`:edit` enters the YAML editing context with full vim keybindings — `i` to insert, Escape to stop inserting, hjkl to navigate. `:w` saves and returns to VIEW. `:q` discards.
+Opens in NORMAL mode. `i` enters INSERT immediately — no `:edit` gate. `:w` saves the plan. `:q` quits.
 
 ## Commands
 
 ```
 # Editing
-:edit                       enter plan editing mode (YAML, full vim)
-:w                          save document (exit edit mode if editing)
-:q                          quit (or discard edits if editing)
+:w                          save document
+:q                          quit
 
 # Dispatch
 :go                         dispatch next 2 pending steps
@@ -238,8 +237,8 @@ python -m pytest tests/ -v
 # Launch TUI
 reeree --project sandbox "add error handling to the scraper"
 
-# Inside TUI: VIEW mode by default
-#   :edit     → edit plan (YAML, full vim)
+# Inside TUI: NORMAL mode by default
+#   i         → insert mode (edit YAML)
 #   :go       → dispatch daemons
 #   :chat     → talk to executor
 #   :help     → command reference
@@ -247,7 +246,7 @@ reeree --project sandbox "add error handling to the scraper"
 
 ## Status
 
-Active development. 423 tests passing. Core dispatch loop, multi-turn daemons, daemon hierarchy, model routing, inline machine tasks, Claude Code subprocess backend, setup wizard, and TUI all working. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
+Active development. 408 tests passing. Core dispatch loop, multi-turn daemons, daemon hierarchy, model routing, inline machine tasks, Claude Code subprocess backend, setup wizard, and TUI all working. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
 
 ---
 

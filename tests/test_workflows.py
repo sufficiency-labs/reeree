@@ -435,33 +435,28 @@ class TestWorkflows:
             assert not panel.has_class("visible")
 
     @pytest.mark.asyncio
-    async def test_plan_insert_mode_yaml(self, tmp_path):
-        """INSERT mode shows YAML, VIEW mode shows rich display."""
+    async def test_plan_shows_yaml(self, tmp_path):
+        """NORMAL mode shows YAML. INSERT mode edits YAML."""
         app = _app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
             status = app.query_one("#status-bar", StatusBar)
 
-            # VIEW mode — rich display
-            assert status.mode == "VIEW"
-            view_text = editor.text
-            assert "✓" in view_text or "○" in view_text  # unicode indicators
+            # NORMAL mode — YAML display
+            assert status.mode == "NORMAL"
+            yaml_text = editor.text
+            assert "intent:" in yaml_text
+            assert "description:" in yaml_text
 
-            # Enter NORMAL (YAML), then INSERT
-            editor.enter_edit_mode()
-            await pilot.pause()
+            # Enter INSERT
             await pilot.press("i")
             assert status.mode == "INSERT"
             insert_text = editor.text
             assert "intent:" in insert_text
-            assert "description:" in insert_text
 
-            # Back to NORMAL → VIEW — rich display again
-            await pilot.press("escape")  # INSERT → NORMAL
-            await pilot.press("escape")  # NORMAL → VIEW
-            assert status.mode == "VIEW"
-            view_text_2 = editor.text
-            assert "intent:" not in view_text_2 or "✓" in view_text_2
+            # Back to NORMAL
+            await pilot.press("escape")
+            assert status.mode == "NORMAL"
 
 
 # ===========================================================================
@@ -473,19 +468,16 @@ class TestInsertModeYAML:
 
     @pytest.mark.asyncio
     async def test_yaml_roundtrip_preserves_plan(self, tmp_path):
-        """Enter NORMAL→INSERT, don't change anything, exit — plan unchanged."""
+        """Enter INSERT, don't change anything, exit — plan unchanged."""
         app = _app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
             original_steps = len(app.plan.steps)
             original_intent = app.plan.intent
 
             editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             await pilot.press("i")
             await pilot.pause()
             await pilot.press("escape")  # INSERT → NORMAL
-            await pilot.press("escape")  # NORMAL → VIEW (parses YAML back)
             await pilot.pause()
 
             assert len(app.plan.steps) == original_steps
@@ -629,29 +621,22 @@ class TestStatusBarAccuracy:
         app = _app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
             status = app.query_one("#status-bar", StatusBar)
-            editor = app.query_one("#plan-editor", PlanEditor)
-            assert status.mode == "VIEW"
+            assert status.mode == "NORMAL"
 
-            # VIEW → NORMAL → INSERT
-            editor.enter_edit_mode()
-            await pilot.pause()
+            # NORMAL → INSERT
             await pilot.press("i")
             assert status.mode == "INSERT"
 
             # INSERT → NORMAL
             await pilot.press("escape")
-            assert status.mode == "EDIT"
+            assert status.mode == "NORMAL"
 
-            # NORMAL → VIEW
-            await pilot.press("escape")
-            assert status.mode == "VIEW"
-
+            # NORMAL → COMMAND → NORMAL
             await pilot.press("colon")
             await pilot.pause()
-            # In command mode, status bar shows COMMAND
             await pilot.press("escape")
             await pilot.pause()
-            assert status.mode == "VIEW"
+            assert status.mode == "NORMAL"
 
 
 # ===========================================================================
@@ -680,16 +665,13 @@ class TestRapidSequences:
         """Interleaving mode switches and commands."""
         app = _app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             for _ in range(10):
                 await pilot.press("i")
                 await pilot.press("escape")
                 await app.execute_command("help")
                 await pilot.pause()
             status = app.query_one("#status-bar", StatusBar)
-            assert status.mode == "EDIT"  # NORMAL vim mode shows as EDIT in status bar
+            assert status.mode == "NORMAL"
 
 
 # ===========================================================================
@@ -742,7 +724,7 @@ class TestPlanAnnotations:
 # ===========================================================================
 
 class TestKeyboardNormalMode:
-    """Every keybinding in VIEW/NORMAL mode."""
+    """Every keybinding in NORMAL mode."""
 
     @pytest.mark.asyncio
     async def test_i_enters_insert(self, tmp_path):
@@ -750,12 +732,9 @@ class TestKeyboardNormalMode:
         async with app.run_test(size=(120, 40)) as pilot:
             status = app.query_one("#status-bar", StatusBar)
             editor = app.query_one("#plan-editor", PlanEditor)
-            assert status.mode == "VIEW"
+            assert status.mode == "NORMAL"
             assert editor.read_only
 
-            # Need :edit first to get to NORMAL, then i for INSERT
-            editor.enter_edit_mode()
-            await pilot.pause()
             await pilot.press("i")
             assert status.mode == "INSERT"
             assert not editor.read_only
@@ -765,9 +744,6 @@ class TestKeyboardNormalMode:
         app = _app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
             status = app.query_one("#status-bar", StatusBar)
-            editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             await pilot.press("a")
             assert status.mode == "INSERT"
 
@@ -776,26 +752,21 @@ class TestKeyboardNormalMode:
         app = _app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
             status = app.query_one("#status-bar", StatusBar)
-            editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             await pilot.press("o")
             assert status.mode == "INSERT"
 
     @pytest.mark.asyncio
-    async def test_escape_returns_to_normal_then_view(self, tmp_path):
+    async def test_escape_returns_to_normal(self, tmp_path):
         app = _app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
             status = app.query_one("#status-bar", StatusBar)
-            editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             await pilot.press("i")
             assert status.mode == "INSERT"
             await pilot.press("escape")  # INSERT → NORMAL
-            assert status.mode == "EDIT"
-            await pilot.press("escape")  # NORMAL → VIEW
-            assert status.mode == "VIEW"
+            assert status.mode == "NORMAL"
+            # Escape in NORMAL is a no-op (like real vim)
+            await pilot.press("escape")
+            assert status.mode == "NORMAL"
 
     @pytest.mark.asyncio
     async def test_hjkl_navigation(self, tmp_path):
@@ -862,30 +833,24 @@ class TestKeyboardInsertMode:
         app = _app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             await pilot.press("i")
             # In INSERT, text is YAML
             assert "intent:" in editor.text
             await pilot.press("escape")
 
     @pytest.mark.asyncio
-    async def test_escape_parses_yaml_back(self, tmp_path):
-        """Exiting INSERT→NORMAL→VIEW parses YAML and re-renders rich display."""
+    async def test_escape_stays_in_yaml(self, tmp_path):
+        """Exiting INSERT→NORMAL keeps YAML displayed."""
         app = _app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             await pilot.press("i")
             # YAML should be visible
             assert "intent:" in editor.text
             await pilot.press("escape")  # INSERT → NORMAL
-            await pilot.press("escape")  # NORMAL → VIEW (parses YAML back)
-            # Now back to rich display
-            rich_text = editor.text
-            # Should have at least one step indicator
-            assert any(c in rich_text for c in "✓○▶–✗◌")
+            # Still YAML in NORMAL mode
+            assert "intent:" in editor.text
+            assert "description:" in editor.text
 
     @pytest.mark.asyncio
     async def test_hjkl_not_intercepted_in_insert(self, tmp_path):
@@ -893,8 +858,6 @@ class TestKeyboardInsertMode:
         app = _app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
             editor = app.query_one("#plan-editor", PlanEditor)
-            editor.enter_edit_mode()
-            await pilot.pause()
             await pilot.press("i")
             # In insert mode, typing should modify text, not navigate
             # We can't easily test character insertion without knowing cursor pos,
@@ -917,7 +880,7 @@ class TestKeyboardCommandMode:
             await pilot.press("escape")
             await pilot.pause()
             status = app.query_one("#status-bar", StatusBar)
-            assert status.mode == "VIEW"
+            assert status.mode == "NORMAL"
 
     @pytest.mark.asyncio
     async def test_enter_submits(self, tmp_path):
@@ -931,9 +894,9 @@ class TestKeyboardCommandMode:
                 inp.value = "help"
                 await pilot.press("enter")
                 await pilot.pause()
-            # Should be back to VIEW after command
+            # Should be back to NORMAL after command
             status = app.query_one("#status-bar", StatusBar)
-            assert status.mode == "VIEW"
+            assert status.mode == "NORMAL"
 
     @pytest.mark.asyncio
     async def test_up_down_history(self, tmp_path):

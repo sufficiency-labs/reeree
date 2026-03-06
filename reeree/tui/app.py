@@ -40,17 +40,15 @@ def _setup_file_logger(project_dir: Path) -> logging.Logger:
 
 
 class PlanEditor(TextArea):
-    """The plan document — three-mode editing.
+    """The plan document — vim-native editing.
 
-    VIEW:   Rich display, read-only. Navigate with hjkl. : for commands.
     NORMAL: YAML source, read-only. hjkl nav. i/a/o to insert. : for commands.
     INSERT: YAML source, editable. Escape returns to NORMAL.
 
-    VIEW is the default. :edit enters NORMAL (YAML). :w in NORMAL exits back to VIEW.
-    This gives full vim keybindings within the YAML editing context.
+    Opens in NORMAL mode. i enters INSERT immediately. No :edit gate.
     """
 
-    vim_mode = reactive("VIEW")
+    vim_mode = reactive("NORMAL")
 
     def __init__(self, plan: Plan | None = None, **kwargs):
         try:
@@ -74,25 +72,19 @@ class PlanEditor(TextArea):
     def load_plan(self, plan: Plan) -> None:
         was_readonly = self.read_only
         self.read_only = False
-        if self.vim_mode in ("NORMAL", "INSERT"):
-            self.text = plan.to_yaml()
-        else:
-            self.text = plan.to_rich_display()
+        self.text = plan.to_yaml()
         self.read_only = was_readonly
 
     def get_plan(self) -> Plan:
-        if self.vim_mode in ("NORMAL", "INSERT"):
-            return Plan.from_yaml(self.text)
-        else:
-            return Plan.from_rich_display(self.text)
+        return Plan.from_yaml(self.text)
 
     def refresh_view(self, plan: Plan) -> None:
-        """Re-render the plan in VIEW mode without disturbing cursor."""
-        if self.vim_mode != "VIEW":
-            return
+        """Re-render the plan YAML without disturbing cursor."""
+        if self.vim_mode == "INSERT":
+            return  # Don't overwrite while user is typing
         cursor = self.cursor_location
         self.read_only = False
-        self.text = plan.to_rich_display()
+        self.text = plan.to_yaml()
         self.read_only = True
         try:
             self.cursor_location = cursor
@@ -121,24 +113,13 @@ class PlanEditor(TextArea):
         return step_idx if step_idx >= 0 else None
 
     def enter_edit_mode(self) -> None:
-        """VIEW → NORMAL: convert rich display to YAML for vim-style editing."""
-        try:
-            plan = self.get_plan()  # parse from rich display
-            self.vim_mode = "NORMAL"
-            self.read_only = True  # NORMAL = read-only (hjkl navigation)
-            self.text = plan.to_yaml()  # show editable YAML
-        except Exception:
-            self.vim_mode = "NORMAL"
-            self.read_only = True
-        app = self.app
-        if isinstance(app, ReereeApp):
-            app.query_one("#status-bar", StatusBar).mode = "EDIT"
-            app._flog.debug("Mode: EDIT (NORMAL)")
+        """No-op — already in NORMAL mode (vim-native)."""
+        pass
 
     def exit_edit_mode(self) -> None:
-        """NORMAL/INSERT → VIEW: parse YAML edits, merge overlay, render rich display."""
+        """INSERT → NORMAL: parse YAML edits, merge overlay."""
         try:
-            plan = Plan.from_yaml(self.text)  # parse YAML edits
+            plan = Plan.from_yaml(self.text)
             # Drain any daemon status updates that arrived during editing
             app = self.app
             if isinstance(app, ReereeApp) and app._status_overlay.has_pending:
@@ -146,17 +127,15 @@ class PlanEditor(TextArea):
                     target = plan.step_by_id(update.step_id)
                     if target:
                         update.apply(target)
-                app.plan = plan  # sync back
-            self.read_only = True
-            self.vim_mode = "VIEW"
-            self.text = plan.to_rich_display()  # back to rich display
+                app.plan = plan
         except Exception:
-            self.read_only = True
-            self.vim_mode = "VIEW"
+            pass
+        self.read_only = True
+        self.vim_mode = "NORMAL"
         app = self.app
         if isinstance(app, ReereeApp):
-            app.query_one("#status-bar", StatusBar).mode = "VIEW"
-            app._flog.debug("Mode: VIEW")
+            app.query_one("#status-bar", StatusBar).mode = "NORMAL"
+            app._flog.debug("Mode: NORMAL")
 
     def _enter_insert_mode(self) -> None:
         """NORMAL → INSERT: unlock YAML for typing."""
@@ -168,13 +147,13 @@ class PlanEditor(TextArea):
             app._flog.debug("Mode: INSERT")
 
     def _enter_normal_mode(self) -> None:
-        """INSERT → NORMAL: lock YAML, keep in YAML view for navigation."""
+        """INSERT → NORMAL: lock YAML for navigation."""
         self.read_only = True
         self.vim_mode = "NORMAL"
         app = self.app
         if isinstance(app, ReereeApp):
-            app.query_one("#status-bar", StatusBar).mode = "EDIT"
-            app._flog.debug("Mode: EDIT (NORMAL)")
+            app.query_one("#status-bar", StatusBar).mode = "NORMAL"
+            app._flog.debug("Mode: NORMAL")
 
     def _consume(self, event: events.Key) -> None:
         """Prevent default and stop propagation."""
@@ -182,33 +161,12 @@ class PlanEditor(TextArea):
         event.stop()
 
     def on_key(self, event: events.Key) -> None:
-        if self.vim_mode == "VIEW":
-            self._handle_view_key(event)
-        elif self.vim_mode == "NORMAL":
+        if self.vim_mode in ("VIEW", "NORMAL"):
             self._handle_normal_key(event)
         elif self.vim_mode == "INSERT":
             if event.key == "escape":
                 self._enter_normal_mode()
                 self._consume(event)
-
-    def _handle_view_key(self, event: events.Key) -> None:
-        """VIEW mode: read-only rich display, navigate + commands only."""
-        nav = self._handle_navigation(event)
-        if nav:
-            return
-        if event.key == "colon":
-            app = self.app
-            if isinstance(app, ReereeApp):
-                app.action_command_mode()
-            self._consume(event)
-        elif event.key == "tab":
-            app = self.app
-            if isinstance(app, ReereeApp):
-                app._focus_next_pane()
-            self._consume(event)
-        # Block all other keys in VIEW — no accidental typing
-        elif event.key not in ("escape", "ctrl+w", "ctrl+c"):
-            self._consume(event)
 
     def _handle_normal_key(self, event: events.Key) -> None:
         """NORMAL mode: YAML displayed, read-only, full vim navigation + editing commands."""
@@ -358,7 +316,7 @@ class PlanEditor(TextArea):
                 app.action_command_mode()
             self._consume(event)
         elif event.key == "escape":
-            self.exit_edit_mode()
+            # No-op in NORMAL (like real vim)
             self._consume(event)
         elif event.key == "tab":
             app = self.app
@@ -461,7 +419,7 @@ class PlanEditor(TextArea):
 class StatusBar(Static):
     """Bottom status bar."""
 
-    mode = reactive("VIEW")
+    mode = reactive("NORMAL")
     daemon_count = reactive(0)
     active_daemons = reactive(0)
     progress = reactive((0, 0))
@@ -469,8 +427,8 @@ class StatusBar(Static):
     def render(self) -> str:
         done, total = self.progress
         mode_colors = {
+            "NORMAL": "bold green",
             "VIEW": "bold green",
-            "EDIT": "bold blue",
             "INSERT": "bold yellow",
             "COMMAND": "bold cyan",
         }
@@ -478,8 +436,8 @@ class StatusBar(Static):
         progress_str = f"{done}/{total}" if total > 0 else "no plan"
         daemon_str = f"{self.active_daemons} active" if self.active_daemons else "idle"
         hints = {
-            "VIEW": ":edit=edit plan  :go=dispatch  :chat=talk  :help",
-            "EDIT": "i=insert  Esc=view  :w=save  :help",
+            "NORMAL": "i=insert  :go=dispatch  :chat=talk  :help",
+            "VIEW": "i=insert  :go=dispatch  :chat=talk  :help",
             "INSERT": "Esc=normal  type to edit YAML",
             "COMMAND": "Enter=run  Esc=cancel",
         }
@@ -928,9 +886,9 @@ class ReereeApp(App):
         # Plan summary
         if self.plan.steps:
             done, total = self.plan.progress
-            exec_log.write(f"  [bold]plan:[/bold] {done}/{total} steps  |  :go to dispatch  |  :edit to edit plan  |  :help for commands")
+            exec_log.write(f"  [bold]plan:[/bold] {done}/{total} steps  |  :go to dispatch  |  i to edit  |  :help for commands")
         else:
-            exec_log.write(f"  [dim]no plan — :edit to start writing, :chat to talk to executor[/dim]")
+            exec_log.write(f"  [dim]no plan — i to start writing, :chat to talk to executor[/dim]")
         exec_log.write("")
 
         # Start heartbeat timer for always-on daemons
@@ -1051,8 +1009,7 @@ class ReereeApp(App):
 
         async def handle_command(cmd: str) -> None:
             editor = self.query_one("#plan-editor", PlanEditor)
-            mode_map = {"VIEW": "VIEW", "NORMAL": "EDIT", "INSERT": "INSERT"}
-            status.mode = mode_map.get(editor.vim_mode, "VIEW")
+            status.mode = editor.vim_mode
             if cmd:
                 self._flog.info(f"Command: :{cmd}")
                 await self.execute_command(cmd)
@@ -1106,63 +1063,48 @@ class ReereeApp(App):
             # :chat, :help, etc. while a file is open
 
         if command in ("q", "quit"):
-            # In edit mode, :q exits back to view without saving
+            # :q — save and quit
             editor = self.query_one("#plan-editor", PlanEditor)
-            if editor.vim_mode in ("NORMAL", "INSERT"):
+            if editor.vim_mode == "INSERT":
                 editor.exit_edit_mode()
-                self._exec_write("[dim]edit discarded[/dim]")
-                return
+            try:
+                self.plan = Plan.from_yaml(editor.text)
+            except Exception:
+                pass
             self._save_plan()
             self._flog.info("Quit. Plan saved.")
             self.exit()
         elif command in ("q!", "quit!"):
-            editor = self.query_one("#plan-editor", PlanEditor)
-            if editor.vim_mode in ("NORMAL", "INSERT"):
-                editor.exit_edit_mode()
-                return
             self._flog.info("Force quit.")
             self.exit()
         elif command == "w":
-            # :w — save (and exit edit mode if editing)
-            # In edit mode: parse YAML, save, return to VIEW
-            # In view mode: just save current plan to disk
+            # :w — save plan to disk, stay in NORMAL mode
             editor = self.query_one("#plan-editor", PlanEditor)
-            if editor.vim_mode in ("NORMAL", "INSERT"):
-                # Parse the YAML, update self.plan, exit to VIEW, save
-                try:
-                    self.plan = Plan.from_yaml(editor.text)
-                except Exception as e:
-                    self._exec_write(f"[red]YAML parse error: {e}[/red]")
-                    return
-                editor.exit_edit_mode()
-                self._save_plan()
-                self._update_status()
-                self._exec_write("plan saved")
-            else:
-                self._save_plan()
-                self._exec_write("plan saved")
+            if editor.vim_mode == "INSERT":
+                editor.exit_edit_mode()  # INSERT → NORMAL
+            try:
+                self.plan = Plan.from_yaml(editor.text)
+            except Exception as e:
+                self._exec_write(f"[red]YAML parse error: {e}[/red]")
+                return
+            self._save_plan()
+            self._update_status()
+            self._exec_write("plan saved")
         elif command == "W":
             # :W — dispatch all pending steps
             self._save_plan()
             await self._dispatch_all()
         elif command == "wq":
             editor = self.query_one("#plan-editor", PlanEditor)
-            if editor.vim_mode in ("NORMAL", "INSERT"):
-                try:
-                    self.plan = Plan.from_yaml(editor.text)
-                except Exception:
-                    pass
-                editor.exit_edit_mode()
+            try:
+                self.plan = Plan.from_yaml(editor.text)
+            except Exception:
+                pass
             self._save_plan()
             self.exit()
         elif command == "edit":
-            # :edit — enter YAML editing mode with full vim keybindings
-            editor = self.query_one("#plan-editor", PlanEditor)
-            if editor.vim_mode == "VIEW":
-                editor.enter_edit_mode()
-                self._exec_write("[dim]editing plan (YAML) — :w to save, :q to discard, i to insert[/dim]")
-            else:
-                self._exec_write("[dim]already editing[/dim]")
+            # :edit — no-op, already in NORMAL mode (vim-native)
+            self._exec_write("[dim]already in normal mode — i to insert[/dim]")
         elif command == "go":
             # :go — the dispatch verb
             # :go          dispatch next 2 pending
@@ -1232,27 +1174,21 @@ class ReereeApp(App):
 
     def _show_help(self) -> None:
         self._exec_write(
-            "[bold]VIEW MODE[/bold] (default — rich plan display)\n"
-            "  :        Enter COMMAND mode\n"
-            "  hjkl     Navigate the plan\n"
-            "  Tab/^W   Cycle pane focus\n"
-            "\n"
-            "[bold]EDIT MODE[/bold] (via :edit — YAML with full vim)\n"
+            "[bold]NORMAL MODE[/bold] (default — YAML plan, vim keybindings)\n"
             "  i/I/a/A  Enter INSERT (before/start/after/end)\n"
             "  o/O      Open line below/above + INSERT\n"
-            "  Esc      INSERT→NORMAL or NORMAL→VIEW\n"
+            "  Esc      INSERT→NORMAL\n"
             "  hjkl     Navigate  |  w/b  Word forward/back\n"
             "  dd       Delete line  |  D  Delete to EOL\n"
             "  yy       Yank line  |  p/P  Paste after/before\n"
             "  cc       Change line  |  C  Change to EOL\n"
             "  x        Delete char  |  J  Join lines\n"
             "  u/Ctrl-r Undo/redo\n"
-            "  :w       Save edits, return to VIEW\n"
-            "  :q       Discard edits, return to VIEW\n"
+            "  :        Enter COMMAND mode\n"
+            "  Tab/^W   Cycle pane focus\n"
             "\n"
             "[bold]COMMANDS[/bold]\n"
-            "  :edit            Edit the plan (YAML, full vim keybindings)\n"
-            "  :w               Save plan (or save+exit if editing)\n"
+            "  :w               Save plan\n"
             "  :go              Dispatch next 2 pending steps\n"
             "  :go all / :W     Dispatch ALL pending steps\n"
             "  :go N            Dispatch step N\n"
@@ -2356,12 +2292,11 @@ class ReereeApp(App):
         await self._dispatch_steps_by_id(step_ids)
 
     def _refresh_plan_display(self) -> None:
-        """Re-render plan in the editor. In VIEW mode, updates immediately.
-        In NORMAL/INSERT mode, no-op (user is editing YAML)."""
+        """Re-render plan YAML. In NORMAL, updates immediately.
+        In INSERT, no-op (StatusOverlay handles merge)."""
         editor = self.query_one("#plan-editor", PlanEditor)
-        if editor.vim_mode == "VIEW":
+        if editor.vim_mode != "INSERT":
             editor.refresh_view(self.plan)
-        # In edit modes, don't touch the TextArea — StatusOverlay handles merge
 
     async def _run_daemon_task(self, daemon_id: int, step, step_id: str) -> None:
         daemon = self._daemon_registry.get(daemon_id)
@@ -2416,12 +2351,11 @@ class ReereeApp(App):
 
             # Update display based on current mode
             editor = self.query_one("#plan-editor", PlanEditor)
-            if editor.vim_mode == "VIEW":
-                # Refresh immediately
-                self._refresh_plan_display()
-            else:
-                # Queue for merge when user exits edit mode
+            if editor.vim_mode == "INSERT":
+                # Queue for merge when user exits insert mode
                 self._status_overlay.post(update)
+            else:
+                self._refresh_plan_display()
 
             if status == "done":
                 summary = result.get('summary', '')
