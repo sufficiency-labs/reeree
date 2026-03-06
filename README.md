@@ -48,15 +48,15 @@ Commands: `:edit` to edit the plan, `:w` to save, `:go` to dispatch steps to dae
 Any markdown file. Write prose, drop in machine tasks, save, results appear.
 
 ```markdown
-# Ed Zitron: A History of Sins
+# Climate Adaptation in Coastal Cities
 
-Ed Zitron has been a controversial figure in tech media for years.
-His track record includes [machine: research and list Ed Zitron's
-public failures and controversies as bullet points].
+Rising sea levels threaten infrastructure worldwide.
+The most vulnerable cities include [machine: research and list
+the 5 most at-risk coastal cities with population and elevation].
 
-The pattern across these incidents is
+The common thread across these cases is
 [machine: analyze the pattern across the above list and write
-a one-paragraph synthesis].
+a one-paragraph synthesis of shared vulnerabilities].
 ```
 
 Type `:w`. The `[machine: ...]` annotations dispatch daemons. While running, they show `[⏳ ...]`. When done, the results replace the annotations in-place. The document evolves.
