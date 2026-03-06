@@ -118,6 +118,9 @@ async def dispatch_step_claude(
 
         if proc.returncode != 0 and not stdout:
             log(f"claude exited with code {proc.returncode}")
+            # Detect auth errors
+            if proc.returncode == 1:
+                log("hint: run 'claude' interactively to authenticate")
             return {"status": "failed", "error": f"claude exit code {proc.returncode}"}
 
         # Parse JSON output
@@ -219,6 +222,10 @@ async def chat_claude(
         await stderr_task
 
         stdout = stdout_bytes.decode().strip()
+
+        if proc.returncode != 0 and not stdout:
+            hint = " — run 'claude' to authenticate" if proc.returncode == 1 else ""
+            return {"result": f"claude exited with code {proc.returncode}{hint}", "session_id": session_id}
 
         try:
             output = json.loads(stdout)
