@@ -946,8 +946,12 @@ class ReereeApp(App):
             try:
                 import httpx
                 headers = {"Authorization": f"Bearer {key}"} if key else {}
-                resp = httpx.get(f"{base}/models", headers=headers, timeout=5.0)
-                available = resp.status_code == 200
+                if not key and env_var:
+                    # No key — don't bother probing (avoids illegal empty Bearer header)
+                    available = False
+                else:
+                    resp = httpx.get(f"{base}/models", headers=headers, timeout=5.0)
+                    available = resp.status_code == 200
             except Exception:
                 available = False
             status = "available" if available else "not detected"
