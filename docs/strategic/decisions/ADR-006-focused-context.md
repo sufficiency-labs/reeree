@@ -36,7 +36,7 @@ A step that edits `sync.sh` doesn't need `README.md`, `package.json`, and 40 oth
 
 - Context builder: `reeree/context.py` — `gather_context()` assembles per-step context
 - Max tokens: `Config.max_context_tokens` (default 24K, leaves room in 32K window)
-- Scope system: `:cd` changes project scope, context adjusts automatically
+- Scope system: scope derived from document path, context adjusts automatically
 - File hints: `> files: a.py, b.py` annotations guide context assembly
 
 ---

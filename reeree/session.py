@@ -21,7 +21,6 @@ def serialize_session(
     registry: DaemonRegistry,
     message_bus: MessageBus | None = None,
     project_dir: str = ".",
-    scope_stack: list[str] | None = None,
 ) -> dict:
     """Serialize full session state to a dict (JSON-safe).
 
@@ -29,14 +28,13 @@ def serialize_session(
     - Plan (intent + all steps with status/annotations/files/commit hashes)
     - Daemon registry (all daemons with status, kind, hierarchy)
     - Message bus history
-    - Project directory and scope stack
+    - Project directory
     - Timestamp
     """
     return {
         "version": 1,
         "timestamp": time.time(),
         "project_dir": str(project_dir),
-        "scope_stack": scope_stack or [],
         "plan": _serialize_plan(plan),
         "daemons": _serialize_registry(registry),
         "messages": message_bus.to_dict() if message_bus else {"messages": []},
@@ -46,7 +44,7 @@ def serialize_session(
 def deserialize_session(data: dict) -> dict:
     """Deserialize session state from a dict.
 
-    Returns a dict with keys: plan, registry, message_bus, project_dir, scope_stack.
+    Returns a dict with keys: plan, registry, message_bus, project_dir.
     """
     version = data.get("version", 1)
     if version != 1:
@@ -61,7 +59,6 @@ def deserialize_session(data: dict) -> dict:
         "registry": registry,
         "message_bus": message_bus,
         "project_dir": data.get("project_dir", "."),
-        "scope_stack": data.get("scope_stack", []),
         "timestamp": data.get("timestamp", 0),
     }
 
@@ -72,10 +69,9 @@ def save_session(
     registry: DaemonRegistry,
     message_bus: MessageBus | None = None,
     project_dir: str = ".",
-    scope_stack: list[str] | None = None,
 ) -> None:
     """Serialize session state and write to a JSON file."""
-    data = serialize_session(plan, registry, message_bus, project_dir, scope_stack)
+    data = serialize_session(plan, registry, message_bus, project_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n")
 
@@ -83,7 +79,7 @@ def save_session(
 def load_session(path: Path) -> dict:
     """Load session state from a JSON file.
 
-    Returns dict with keys: plan, registry, message_bus, project_dir, scope_stack.
+    Returns dict with keys: plan, registry, message_bus, project_dir.
     Raises FileNotFoundError if the file doesn't exist.
     """
     data = json.loads(path.read_text())

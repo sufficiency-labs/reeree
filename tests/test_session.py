@@ -102,12 +102,10 @@ class TestSessionSerialization:
         plan = Plan(intent="test", steps=[])
         registry = DaemonRegistry()
 
-        data = serialize_session(plan, registry, project_dir="/home/user/project",
-                                scope_stack=["/home/user/project", "/home/user/project/sub"])
+        data = serialize_session(plan, registry, project_dir="/home/user/project")
 
         restored = deserialize_session(data)
         assert restored["project_dir"] == "/home/user/project"
-        assert restored["scope_stack"] == ["/home/user/project", "/home/user/project/sub"]
 
     def test_save_and_load(self, tmp_path):
         plan = Plan(intent="persistence test", steps=[

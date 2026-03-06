@@ -235,13 +235,6 @@ class TestCommandCoverage:
             await pilot.pause()
 
     @pytest.mark.asyncio
-    async def test_cd_no_args(self, tmp_path):
-        app = _app(tmp_path)
-        async with app.run_test(size=(120, 40)) as pilot:
-            app._change_scope("")
-            await pilot.pause()
-
-    @pytest.mark.asyncio
     async def test_move_no_args(self, tmp_path):
         app = _app(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
@@ -329,68 +322,6 @@ class TestWorkflows:
             # Reload and verify
             loaded = Plan.load(plan_path)
             assert len(loaded.steps) == 3
-
-    @pytest.mark.asyncio
-    async def test_scope_push_pop_with_plans(self, tmp_path):
-        """Scope change preserves parent plan and loads child plan."""
-        # Create child dir with its own plan
-        child = tmp_path / "lib"
-        child.mkdir()
-        (child / ".reeree").mkdir()
-        child_plan = Plan(intent="lib work", steps=[Step(description="refactor")])
-        child_plan.save(child / ".reeree" / "plan.yaml")
-
-        app = _app(tmp_path)
-        async with app.run_test(size=(120, 40)) as pilot:
-            # Verify parent plan
-            assert app.plan.intent == "fix the scraper bugs"
-            assert len(app.plan.steps) == 3
-
-            # Push into child
-            app._change_scope("lib")
-            await pilot.pause()
-            assert app.plan.intent == "lib work"
-            assert len(app.plan.steps) == 1
-            assert app.project_dir == child
-
-            # Modify child plan
-            await app.execute_command('add "new child step"')
-            await pilot.pause()
-            assert len(app.plan.steps) == 2
-
-            # Pop back to parent
-            app._change_scope("..")
-            await pilot.pause()
-            assert app.plan.intent == "fix the scraper bugs"
-            assert len(app.plan.steps) == 3
-            assert app.project_dir == tmp_path
-
-    @pytest.mark.asyncio
-    async def test_deep_scope_nesting(self, tmp_path):
-        """Push 3 levels deep, pop back to root."""
-        a = tmp_path / "a"
-        b = a / "b"
-        c = b / "c"
-        for d in (a, b, c):
-            d.mkdir(parents=True)
-            (d / ".reeree").mkdir()
-
-        app = _app(tmp_path)
-        async with app.run_test(size=(120, 40)) as pilot:
-            app._change_scope("a")
-            app._change_scope("b")
-            app._change_scope("c")
-            await pilot.pause()
-            assert app.project_dir == c
-            assert len(app._scope_stack) == 3
-
-            app._change_scope("..")
-            assert app.project_dir == b
-            app._change_scope("..")
-            assert app.project_dir == a
-            app._change_scope("..")
-            assert app.project_dir == tmp_path
-            assert len(app._scope_stack) == 0
 
     @pytest.mark.asyncio
     async def test_file_viewer_workflow(self, tmp_path):
@@ -743,22 +674,6 @@ class TestRapidSequences:
                 await app.execute_command(f"del {i}")
             await pilot.pause()
             assert len(app.plan.steps) == 0
-
-    @pytest.mark.asyncio
-    async def test_rapid_scope_changes(self, tmp_path):
-        """Rapidly pushing and popping scope shouldn't corrupt state."""
-        sub = tmp_path / "sub"
-        sub.mkdir()
-        (sub / ".reeree").mkdir()
-
-        app = _app(tmp_path)
-        async with app.run_test(size=(120, 40)) as pilot:
-            for _ in range(10):
-                app._change_scope("sub")
-                app._change_scope("..")
-            await pilot.pause()
-            assert app.project_dir == tmp_path
-            assert len(app._scope_stack) == 0
 
     @pytest.mark.asyncio
     async def test_rapid_mode_switching_with_commands(self, tmp_path):

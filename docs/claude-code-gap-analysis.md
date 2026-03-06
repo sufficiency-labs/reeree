@@ -50,7 +50,7 @@ Build a thing fast, deploy it, iterate visually. Short feedback loops, high para
 | **Context persistence** | 23 sessions, auto-summarization on context exhaustion | Session serialization (ADR-001), daemon persistence, state recovery. Session.py exists but socket server doesn't. |
 | **File editing** | Read/Edit/Write tools, surgical edits | Executor can do `write` and `edit` actions but no interactive file editing in the TUI beyond PlanEditor. Need general-purpose file editing. |
 | **Web access** | WebFetch, WebSearch for research | No web capabilities. Daemons are local-only. |
-| **Multi-project scope** | Works on any directory | `:cd` exists but scope stack needs polish. No project switching without restart. |
+| **Multi-project scope** | Works on any directory | Scope is implicit in file path. No project switching without restart. |
 | **Agent parallelism** | Spawns sub-agents for research, runs them in background | Daemon parallelism exists but no agent-style "go research X and come back." |
 
 ### Important — Quality-of-life that makes it daily-driveable
@@ -83,8 +83,8 @@ Rob exhausts context 2.3 times per session on average. Reeree's focused-context-
 ### 2. Corrections cluster around voice/style → daemon profiles
 25% of correction messages are about tone (too verbose, too cute, too anthropomorphized, wrong register). This is exactly what daemon personality profiles (ADR-012) solve — learn the voice once, apply it every time.
 
-### 3. Topic switching is normal → scope stack
-Rob jumps between topics mid-session constantly. The `:cd` scope stack is the right model. But it needs to be faster — one command to switch, all context updates automatically.
+### 3. Topic switching is normal → path-based scope
+Rob jumps between topics mid-session constantly. Scope derived from the document path is the right model — open a different file and all context updates automatically.
 
 ### 4. Stream-of-consciousness input → reeree's plan format
 Rob's natural input is terse, typo-heavy, rapid-fire multi-message bursts that form a single thought. The plan file captures this — he writes fragments, daemons interpret them. No need for polished prompts.

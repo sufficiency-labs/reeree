@@ -160,15 +160,6 @@ Autonomy levels:
 - **high** — auto-approve reads + writes, ask about shell
 - **full** — auto-approve all
 
-## Scope & Context
-
-| Command | Action |
-|---------|--------|
-| `:cd path` | Push into subdirectory scope |
-| `:cd ..` | Pop to parent scope |
-| `:cd` | Show current scope |
-| `:scope` | Show scope stack |
-
 ## Analysis
 
 | Command | Action |

@@ -1,77 +1,63 @@
-# ADR-011: Subrepo Scope as Lexical Binding
+# ADR-011: Scope Implicit in Document Path
 
-**Status:** Accepted
-**Date:** 2026-03-05
+**Status:** Superseded (replaces original `:cd`-based explicit scoping)
+**Date:** 2026-03-06 (original: 2026-03-05)
 
 ## Context
 
-Reeree's `:cd` command changes the working scope to a subdirectory (typically a subrepo). The question is: what's the relationship between parent and child scope? Currently it's ad-hoc — parent CLAUDE.md is inherited, daemons are global, chat is scoped. This needs a clear model.
+The original version of this ADR defined a `:cd` command that explicitly pushed/popped scope to subdirectories (typically subrepos). This created a scope stack maintained by the TUI, with `:cd path` pushing a frame and `:cd ..` popping it. In practice, this mechanism was unnecessary -- opening a file already implies what directory you're working in. The explicit scope commands added complexity without adding capability.
 
 ## Decision
 
-Subrepo scoping follows **lexical binding** semantics from programming languages:
+Scope is **implicit in the document path.** When you open a file with `reeree private/foo/PLAN.md`, the tool derives the working directory from the file's location (`private/foo/`). No explicit `:cd` command exists.
 
-- **Parent scope is read-only ambient context.** The child can *see* parent bindings (CLAUDE.md, conventions, project structure) but cannot mutate them. Parent context flows down automatically.
-- **Child scope is the focused workspace.** All daemon writes (file edits, shell commands, git commits) are confined to the child scope's directory tree. The child cannot write to parent paths.
-- **Daemons are global.** They continue running regardless of scope changes, but each daemon's *write boundary* is fixed to the scope it was spawned in. A daemon spawned in `private/reeree/` cannot write to `vorkosigan/`.
-- **Scope stack = call stack.** `:cd lib` is like a function call — you push a new frame. `:cd ..` returns. The parent's state (plan, chat) is preserved on the stack exactly as left.
+- **The file path IS the scope.** Opening `private/reeree/PLAN.md` means you're working in `private/reeree/`. Opening `private/relationships/people/alice/README.md` means you're working in that person's directory.
+- **Parent context is discoverable.** CLAUDE.md files from parent directories are found by walking up the directory tree. A file at `private/reeree/docs/foo.md` can see CLAUDE.md from `private/reeree/` and from the repo root. This replaces the explicit "parent scope inheritance" from the original design.
+- **Daemon write boundaries follow the file.** A daemon spawned for a file in `private/reeree/` writes within that directory tree. No separate scope tracking needed -- the file location determines the boundary.
+- **No scope stack, no scope commands.** The `:cd`, `:cd ..`, and `:scope` commands are removed. The user opens a file; the tool knows where it is.
 
-### What the child inherits (read-only)
+### What the tool derives from the path
 
-- Parent CLAUDE.md (and grandparent, up to 5 levels)
-- Parent project structure awareness (via context telescoping)
-- Parent daemon output in exec log (visible, not editable)
-- Parent config as defaults (overridable by child `.reeree/config.json`)
+- Working directory for daemon file operations
+- Which CLAUDE.md files to load as context (walk up the tree)
+- Git repository boundary (for commits)
+- Config overrides (`.reeree/config.json` in the file's project directory)
 
-### What the child does NOT inherit
+### What stays the same from the original ADR
 
-- Parent plan (child has its own plan, possibly empty)
-- Parent chat history (fresh chat per scope)
-- Write access to parent files
-
-### Enforcement
-
-- `check_path_containment()` in `executor.py` already prevents path traversal
-- Daemon spawn records `scope` — the project_dir name at spawn time
-- Daemons from a different scope than current have their output quieted in the TUI log (file log gets everything)
-
-### Roles analogy
-
-Like IAM roles:
-- **Root scope** = admin. Full access to the top-level repo.
-- **Child scope** = scoped role. Read parent context, write only to child directory.
-- **`:cd ..`** = assume parent role again.
-- **Daemon scope** = fixed at spawn. A daemon's permissions don't change when the user changes scope.
+- `check_path_containment()` in `executor.py` still prevents path traversal
+- Parent CLAUDE.md context still flows to child directories (read-only)
+- Each daemon's write boundary is still fixed at spawn time
 
 ## Values Served
 
-- **[Focused Context](../../VALUES.md#6-sufficiency-over-maximalism)** — child scope gets only relevant parent context, not everything
-- **[Plan Is the Interface](../../VALUES.md#2-plan-is-the-interface)** — each scope has its own plan, its own work queue
-- **[Git-Per-Step](../../VALUES.md)** — child scope commits go to the child repo, parent commits go to the parent repo
+- **[Focused Context](../../VALUES.md#6-sufficiency-over-maximalism)** -- context is scoped to the file's location, no manual management
+- **[Plan Is the Interface](../../VALUES.md#2-plan-is-the-interface)** -- the document you open determines the workspace
+- **[Sufficiency Over Maximalism](../../VALUES.md#6-sufficiency-over-maximalism)** -- removed a command that duplicated what the filesystem already provides
+- **[Git-Per-Step](../../VALUES.md)** -- commits target the repo containing the file
 
 ## Alternatives Considered
 
 | Option | Verdict | Why |
 |--------|---------|-----|
-| Flat scope (no nesting) | Rejected | Can't work on a subrepo in context of parent |
-| Dynamic scoping (child sees all parent state) | Rejected | Leaky, confusing, no containment |
-| Full isolation (child sees nothing from parent) | Rejected | Loses valuable context |
+| Explicit `:cd` scope stack (original ADR-011) | Superseded | Unnecessary -- file path already implies scope |
+| Flat scope (no nesting) | Still rejected | Parent context is valuable |
+| Dynamic scoping (child sees all parent state) | Still rejected | Leaky, no containment |
 
 ## Consequences
 
-- Each daemon has a fixed write boundary at its spawn scope
-- `check_path_containment()` must use the daemon's scope, not the user's current scope
-- Parent context is always available but clearly marked as ambient (not editable)
-- Scope changes don't affect running daemons — they keep their original scope
+- `:cd`, `:cd ..`, and `:scope` commands removed from the TUI
+- Scope is determined at file-open time, not changed during a session
+- Simpler mental model: the file you're editing IS your context
+- Parent CLAUDE.md discovery is a directory-walk operation, not a stack operation
 
 ## Implementation
 
-- Scope stack: `app._scope_stack` in `tui/app.py`
-- Scope push/pop: `_change_scope()` in `tui/app.py`
-- Parent context discovery: `_find_parent_contexts()` in `context.py`
+- Path-based scope derivation: `cli.py` resolves the file path to determine project directory
+- Parent context discovery: `_find_parent_contexts()` in `context.py` walks up the directory tree
 - Path enforcement: `check_path_containment()` in `executor.py`
-- Daemon scope tracking: `Daemon.scope` field in `daemon_registry.py`
+- Daemon scope tracking: `Daemon.scope` field in `daemon_registry.py` (set from file path at spawn)
 
 ---
 
-> **Core Planning Documents:** [Values](../../VALUES.md) → [Implementation](../../IMPLEMENTATION.md) → [Plan](../../PROJECT_PLAN.md) → [Cost](../../COST.md) → [Revenue](../../REVENUE.md) → [Profit](../../PROFIT.md)
+> **Core Planning Documents:** [Values](../../VALUES.md) -> [Implementation](../../IMPLEMENTATION.md) -> [Plan](../../PROJECT_PLAN.md) -> [Cost](../../COST.md) -> [Revenue](../../REVENUE.md) -> [Profit](../../PROFIT.md)

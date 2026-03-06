@@ -508,11 +508,6 @@ class ReereeApp(App):
         self._chat_messages: list[dict] = []
         self._chat_target = "executor"  # which daemon type we're chatting with
         self._chat_busy = False
-        # Scope stack — context telescoping within a session
-        # Each entry: (project_dir, plan, chat_messages, chat_target)
-        # Daemons are NOT scoped — they're global to the session.
-        # All daemon output goes to the shared exec log regardless of active scope.
-        self._scope_stack: list[tuple] = []
         self._file_viewer_path: Path | None = None  # Track open file
         self._status_overlay = StatusOverlay()  # Daemon status updates buffer
         self._launch_file: Path | None = None  # File to open on mount (from CLI)
@@ -845,10 +840,6 @@ class ReereeApp(App):
             self._toggle_chat(args)
         elif command == "close":
             self._toggle_chat_off()
-        elif command == "cd":
-            self._change_scope(args.strip())
-        elif command == "scope":
-            self._show_scope()
         elif command == "pause" and args:
             try:
                 did = int(args.strip())
@@ -913,8 +904,6 @@ class ReereeApp(App):
             "  :set key value   Set config (model, autonomy)\n"
             "  :chat            Chat with executor daemon\n"
             "  :chat coherence  Chat with coherence daemon\n"
-            "  :cd path         Push scope to subrepo\n"
-            "  :cd ..           Pop scope to parent\n"
             "  :cohere path     Run coherence check\n"
             "  :propagate       Crawl cross-references\n"
             "  :pause N         Pause daemon N\n"
@@ -924,112 +913,6 @@ class ReereeApp(App):
             "  :q / :q! / :wq   Quit / force quit / save+quit\n"
             "  :help            This help\n"
         )
-
-    def _change_scope(self, path: str) -> None:
-        """Change execution scope — context telescoping within a session.
-
-        :cd sandbox      Push into sandbox/, new executor context
-        :cd ..            Pop back to parent scope
-        :cd               Show current scope (same as :scope)
-
-        The parent context doesn't disappear — it's on the stack.
-        Daemons from the parent scope keep running.
-        The new scope inherits parent CLAUDE.md context automatically
-        (via context.py's _find_parent_contexts).
-        """
-        if not path:
-            self._show_scope()
-            return
-
-        if path == "..":
-            # Pop scope — return to parent
-            if not self._scope_stack:
-                self._exec_write("[yellow]Already at root scope[/yellow]")
-                return
-
-            # Save current scope state
-            self._save_plan()
-
-            # Restore parent scope
-            parent = self._scope_stack.pop()
-            (self.project_dir, self.plan,
-             parent_chat, parent_target) = parent
-
-            # Daemons are global — they keep running, keep printing to exec log.
-            # Only chat and plan are scoped.
-            self._chat_messages = parent_chat
-            self._chat_target = parent_target
-
-            # Reload plan in editor
-            editor = self.query_one("#plan-editor", PlanEditor)
-            editor.load_plan(self.plan)
-            self._update_status()
-            self.sub_title = str(self.project_dir.name)
-            self._exec_write(f"scope: {self.project_dir}")
-            self._flog.info(f"Scope popped to: {self.project_dir}")
-            return
-
-        # Push scope — descend into child directory
-        new_dir = (self.project_dir / path).resolve()
-        if not new_dir.exists():
-            self._exec_write(f"[red]Directory not found: {path}[/red]")
-            return
-        if not new_dir.is_dir():
-            self._exec_write(f"[red]Not a directory: {path}[/red]")
-            return
-
-        # Save current scope to stack (daemons are global, not scoped)
-        self._save_plan()
-        self._scope_stack.append((
-            self.project_dir,
-            self.plan,
-            list(self._chat_messages),
-            self._chat_target,
-        ))
-
-        # Switch to new scope
-        self.project_dir = new_dir
-        self._chat_messages = []  # Fresh chat for new scope
-        self._chat_target = "executor"
-
-        # Load plan from new scope if it exists
-        new_plan_path = new_dir / ".reeree" / "plan.yaml"
-        if new_plan_path.exists():
-            self.plan = Plan.load(new_plan_path)
-        else:
-            self.plan = Plan(intent="", steps=[])
-
-        editor = self.query_one("#plan-editor", PlanEditor)
-        editor.load_plan(self.plan)
-        self._update_status()
-        self.sub_title = str(new_dir.name)
-
-        # Show scope info
-        scope_depth = len(self._scope_stack)
-        parent_names = " > ".join(s[0].name for s in self._scope_stack)
-        self._exec_write(
-            f"[bold]Scope: {parent_names} > {new_dir.name}[/bold]\n"
-            f"[dim]Depth: {scope_depth}  |  Parent context inherited  |  :cd .. to return[/dim]"
-        )
-        self._flog.info(f"Scope pushed to: {new_dir}")
-
-    def _show_scope(self) -> None:
-        """Show the current scope stack."""
-        lines = [f"[bold]Scope stack:[/bold]  [dim]({self._daemon_registry.active_count} daemons running globally)[/dim]"]
-        for i, (pdir, plan, _chat, _target) in enumerate(self._scope_stack):
-            done, total = plan.progress if plan.steps else (0, 0)
-            lines.append(
-                f"  {'  ' * i}{pdir.name}/  "
-                f"[dim]{done}/{total} steps[/dim]"
-            )
-        # Current scope
-        depth = len(self._scope_stack)
-        done, total = self.plan.progress if self.plan.steps else (0, 0)
-        lines.append(
-            f"  {'  ' * depth}[bold]{self.project_dir.name}/[/bold]  "
-            f"[dim]{done}/{total} steps[/dim]  ← current"
-        )
-        self._exec_write("\n".join(lines))
 
     def _toggle_chat(self, target: str = "") -> None:
         panel = self.query_one("#chat-panel")
@@ -1322,17 +1205,6 @@ class ReereeApp(App):
                 f"Project context:\n{context[:8000]}\n\n"
                 f"Current plan:\n{plan_md}\n\n"
             )
-            # Include parent scope context if we're in a child scope
-            if self._scope_stack:
-                parent_ctx = []
-                for pdir, pplan, _chat, _target in self._scope_stack:
-                    parent_ctx.append(f"Parent scope: {pdir.name}")
-                    if pplan.intent:
-                        parent_ctx.append(f"  Plan: {pplan.intent}")
-                    claude_md = pdir / "CLAUDE.md"
-                    if claude_md.exists():
-                        parent_ctx.append(f"  {claude_md.read_text()[:2000]}")
-                system += f"Parent context (ambient):\n{''.join(parent_ctx)[:4000]}\n\n"
             if daemon_history:
                 system += f"Recent execution:\n{daemon_history[:2000]}\n"
 

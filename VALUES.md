@@ -66,7 +66,7 @@ Power users already have the right workflow: tmux for persistence, vim for editi
 **Test question:** Could the daemon have found the answer by searching the project first?
 **In practice:** Daemons search project files, config, history, linked documents, and prior outputs before surfacing a question. If the answer exists anywhere in the user's system, the daemon finds it — not bothers the user for it. Every question that reaches the user should be genuinely novel, not something a grep could have answered.
 **Rules out:** Lazy escalation, defaulting to "ask the user," prompting for information already in the codebase, re-asking for things documented elsewhere.
-**Implementation:** Context telescoping in [context.py](reeree/context.py), scope inheritance via `:cd`.
+**Implementation:** Context telescoping in [context.py](reeree/context.py), scope derived from document path.
 
 ## Red Lines
 

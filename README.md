@@ -128,10 +128,6 @@ Three modes in the document, like vim:
 :set autonomy <level>       low|medium|high|full
 :setup                      re-run setup wizard
 
-# Scope
-:cd path                    push scope to subdirectory
-:cd ..                      pop scope to parent
-
 # Analysis
 :cohere [path|glob]         run coherence check
 :propagate                  crawl cross-references

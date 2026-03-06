@@ -1,7 +1,7 @@
 """End-to-end integration tests for reeree TUI.
 
 Tests the full user workflow: launch, vim modes, commands, file viewer,
-command history, plan manipulation, daemon lifecycle, scope changes.
+command history, plan manipulation, daemon lifecycle.
 Runs in headless mode via Textual's run_test().
 """
 
@@ -348,42 +348,6 @@ class TestDaemonLifecycle:
             await app.execute_command("kill 999")
             await pilot.pause()
             # No crash
-
-
-# ---------------------------------------------------------------------------
-# Scope changes
-# ---------------------------------------------------------------------------
-
-class TestScopeChanges:
-
-    @pytest.mark.asyncio
-    async def test_cd_and_back(self, tmp_path):
-        sub = tmp_path / "lib"
-        sub.mkdir()
-        (sub / ".reeree").mkdir()
-        app = _app(tmp_path)
-        async with app.run_test(size=(120, 40)) as pilot:
-            orig = app.project_dir
-            app._change_scope("lib")
-            assert app.project_dir == sub
-
-            app._change_scope("..")
-            assert app.project_dir == orig
-
-    @pytest.mark.asyncio
-    async def test_cd_nonexistent(self, tmp_path):
-        app = _app(tmp_path)
-        async with app.run_test(size=(120, 40)) as pilot:
-            app._change_scope("nope")
-            assert app.project_dir == tmp_path
-
-    @pytest.mark.asyncio
-    async def test_cd_to_file(self, tmp_path):
-        (tmp_path / "f.txt").write_text("hi")
-        app = _app(tmp_path)
-        async with app.run_test(size=(120, 40)) as pilot:
-            app._change_scope("f.txt")
-            assert app.project_dir == tmp_path
 
 
 # ---------------------------------------------------------------------------

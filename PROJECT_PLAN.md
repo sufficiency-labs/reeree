@@ -159,9 +159,6 @@ Phase 1 complete. Phase 3 complete. Phase 8 infrastructure complete. Session ser
 | `:kill N` | DONE | Kill daemon |
 | `:chat [target]` | DONE | Toggle chat panel |
 | `:close` | DONE | Close chat |
-| `:cd path` | DONE | Push scope |
-| `:cd ..` | DONE | Pop scope |
-| `:scope` | DONE | Show scope stack |
 | `:cohere files` | DONE | Coherence check |
 | `:propagate` | DONE | Crawl cross-refs |
 | `:setup` | DONE | Chat-based config |
